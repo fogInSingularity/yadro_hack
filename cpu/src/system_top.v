@@ -7,10 +7,10 @@ module system_top #(
     input  wire rst_n,
 
     output wire [3:0] o_disp_7seg_digs,
-    output wire [7:0] o_disp_7seg_segs//,
+    output wire [7:0] o_disp_7seg_segs,
 
-    // inout wire sda_io,
-    // inout wire scl_io
+    inout wire sda_io,
+    inout wire scl_io
 );
 
 wire [29:0] core2imem_addr;
@@ -35,19 +35,26 @@ wire        xbar2mmio_wren;
 wire [31:0] mmio2xbar_data;
 
 // Tri-state buffers (open-drain)
-// assign scl_io    = scl_padoen ? 1'bz : 1'b0;
-// assign scl_pad_i = scl_io;
+wire scl_pad_i;
+wire scl_pad_o;
+wire scl_padoen;
+wire sda_pad_i;
+wire sda_pad_o;
+wire sda_padoen;
 
-// assign sda_io    = sda_padoen ? 1'bz : 1'b0;
-// assign sda_pad_i = sda_io;
+assign scl_io    = scl_padoen ? 1'bz : 1'b0;
+assign scl_pad_i = scl_io;
 
-// reg [1:0] sda_pad_i_sync;
-// always @(posedge clk) sda_pad_i_sync <= {sda_pad_i_sync[0], sda_pad_i};
-// wire sda_pad_i_s = sda_pad_i_sync[1];
+assign sda_io    = sda_padoen ? 1'bz : 1'b0;
+assign sda_pad_i = sda_io;
 
-// reg [1:0] scl_pad_i_sync;
-// always @(posedge clk) scl_pad_i_sync <= {scl_pad_i_sync[0], scl_pad_i};
-// wire scl_pad_i_s = scl_pad_i_sync[1];
+reg [1:0] sda_pad_i_sync;
+always @(posedge clk) sda_pad_i_sync <= {sda_pad_i_sync[0], sda_pad_i};
+wire sda_pad_i_s = sda_pad_i_sync[1];
+
+reg [1:0] scl_pad_i_sync;
+always @(posedge clk) scl_pad_i_sync <= {scl_pad_i_sync[0], scl_pad_i};
+wire scl_pad_i_s = scl_pad_i_sync[1];
 
 imem imem (
     .clk            (clk),
@@ -79,8 +86,12 @@ io_subsystem #(
     .o_mmio_data         (mmio2xbar_data),
 
     .o_disp_7seg_digs    (o_disp_7seg_digs),
-    .o_disp_7seg_segs    (o_disp_7seg_segs)
+    .o_disp_7seg_segs    (o_disp_7seg_segs),
 
+    .i_scl               (scl_pad_i_s),
+    .o_scl_oen           (scl_padoen),
+    .i_sda               (sda_pad_i_s),
+    .o_sda_oen           (sda_padoen)
 
 );
 

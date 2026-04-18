@@ -19,8 +19,8 @@ system_top #(
 ) system_top_inst (
     .clk              (clk),
     .rst_n            (rst_n),
-    // .sda_io           (SDA),
-    // .scl_io           (SCL),
+    .sda_io           (SDA),
+    .scl_io           (SCL),
     .o_disp_7seg_digs (DIGS),
     .o_disp_7seg_segs (SEGS)
 );
