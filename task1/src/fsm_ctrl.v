@@ -915,4 +915,3 @@ module fsm_ctrl #(
     end
 
 endmodule
-
