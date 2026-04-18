@@ -1,15 +1,16 @@
 `include "config.vh"
 
 module system_top #(
-    parameter DISP_7SEG_CNT_WIDTH = 14
+    parameter DISP_7SEG_CNT_WIDTH = 16
 ) (
     input  wire clk,
     input  wire rst_n,
 
-    output wire o_7seg_disp_stcp,
-    output wire o_7seg_disp_shcp,
-    output wire o_7seg_disp_ds,
-    output wire o_7seg_disp_oe
+    output wire [3:0] o_disp_7seg_digs,
+    output wire [7:0] o_disp_7seg_segs//,
+
+    // inout wire sda_io,
+    // inout wire scl_io
 );
 
 wire [29:0] core2imem_addr;
@@ -33,6 +34,20 @@ wire  [3:0] xbar2mmio_mask;
 wire        xbar2mmio_wren;
 wire [31:0] mmio2xbar_data;
 
+// Tri-state buffers (open-drain)
+// assign scl_io    = scl_padoen ? 1'bz : 1'b0;
+// assign scl_pad_i = scl_io;
+
+// assign sda_io    = sda_padoen ? 1'bz : 1'b0;
+// assign sda_pad_i = sda_io;
+
+// reg [1:0] sda_pad_i_sync;
+// always @(posedge clk) sda_pad_i_sync <= {sda_pad_i_sync[0], sda_pad_i};
+// wire sda_pad_i_s = sda_pad_i_sync[1];
+
+// reg [1:0] scl_pad_i_sync;
+// always @(posedge clk) scl_pad_i_sync <= {scl_pad_i_sync[0], scl_pad_i};
+// wire scl_pad_i_s = scl_pad_i_sync[1];
 
 imem imem (
     .clk            (clk),
@@ -42,12 +57,12 @@ imem imem (
 );
 
 dmem dmem (
-     .clk           (clk),
-     .i_addr        (xbar2dmem_addr[`DMEM_ADDR_WIDTH-1:0]),
-     .i_data        (xbar2dmem_data),
-     .i_we          (xbar2dmem_wren),
-     .i_mask        (xbar2dmem_mask),
-     .o_data        (dmem2xbar_data)
+    .clk           (clk),
+    .i_addr        (xbar2dmem_addr[`DMEM_ADDR_WIDTH-1:0]),
+    .i_data        (xbar2dmem_data),
+    .i_we          (xbar2dmem_wren),
+    .i_mask        (xbar2dmem_mask),
+    .o_data        (dmem2xbar_data)
 );
 
 io_subsystem #(
@@ -56,15 +71,17 @@ io_subsystem #(
 ) io_subsystem (
     .clk                 (clk),
     .rst_n               (rst_n),
+    
     .i_mmio_addr         (xbar2mmio_addr),
     .i_mmio_data         (xbar2mmio_data),
     .i_mmio_wren         (xbar2mmio_wren),
     .i_mmio_mask         (xbar2mmio_mask),
     .o_mmio_data         (mmio2xbar_data),
-    .o_7seg_disp_stcp    (o_7seg_disp_stcp),
-    .o_7seg_disp_shcp    (o_7seg_disp_shcp),
-    .o_7seg_disp_ds      (o_7seg_disp_ds),
-    .o_7seg_disp_oe      (o_7seg_disp_oe)
+
+    .o_disp_7seg_digs    (o_disp_7seg_digs),
+    .o_disp_7seg_segs    (o_disp_7seg_segs)
+
+
 );
 
 mem_xbar #(

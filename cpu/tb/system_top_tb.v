@@ -2,25 +2,27 @@
 
 module system_top_tb;
 
-reg clk = 1'b0;
-reg rst_n = 1'b1;
+reg clk;
+reg rst_n;
 
-wire STCP;
-wire SHCP;
-wire DS;
-wire OE;
-
-always #1 clk <= ~clk;
+wire SDA, SCL;
+wire [3:0] DIGS;
+wire [7:0] SEGS;
+ 
+initial begin
+    clk = 1'b0;
+    forever #1 clk = ~clk;
+end
 
 system_top #(
     .DISP_7SEG_CNT_WIDTH (4)
 ) system_top_inst (
     .clk              (clk),
     .rst_n            (rst_n),
-    .o_7seg_disp_stcp (STCP),
-    .o_7seg_disp_shcp (SHCP),
-    .o_7seg_disp_ds   (DS),
-    .o_7seg_disp_oe   (OE)
+    // .sda_io           (SDA),
+    // .scl_io           (SCL),
+    .o_disp_7seg_digs (DIGS),
+    .o_disp_7seg_segs (SEGS)
 );
 
 initial begin

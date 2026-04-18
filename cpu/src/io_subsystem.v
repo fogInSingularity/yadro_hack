@@ -1,6 +1,6 @@
 module io_subsystem #(
     parameter DISP_7SEG_CNT_WIDTH = 0,
-    parameter [29:0] DISP_7SEG_ADDR = 30'h0000 
+    parameter [29:0] DISP_7SEG_ADDR = 30'h0000
 ) (
     input  wire        clk,
     input  wire        rst_n,
@@ -9,13 +9,14 @@ module io_subsystem #(
     input  wire        i_mmio_wren,
     input  wire [3:0]  i_mmio_mask,
     output wire [31:0] o_mmio_data,
-    output wire        o_7seg_disp_stcp,
-    output wire        o_7seg_disp_shcp,
-    output wire        o_7seg_disp_ds,
-    output wire        o_7seg_disp_oe 
+    output wire [3:0]  o_disp_7seg_digs,
+    output wire [7:0]  o_disp_7seg_segs
 );
 
-// there would be an i/o xbar here if there were more than one i/o device
+// ---------------------------------------
+// ------------- DISP 7 SEG --------------
+// ---------------------------------------
+
 
 wire [15:0] disp_7seg_data;
 wire        disp_7seg_wren;
@@ -35,10 +36,14 @@ ctrl_7_seg_disp #(
     .i_data (disp_7seg_data),
     .i_wren (disp_7seg_wren),
     .i_mask (disp_7seg_mask),
-    .o_stcp (o_7seg_disp_stcp),
-    .o_shcp (o_7seg_disp_shcp),
-    .o_ds   (o_7seg_disp_ds),
-    .o_oe   (o_7seg_disp_oe)
+    .o_digs (o_disp_7seg_digs),
+    .o_segs (o_disp_7seg_segs)
 );
+
+// ---------------------------------------
+// ------------- I2C MASTER -------------- 
+// ---------------------------------------
+
+
 
 endmodule

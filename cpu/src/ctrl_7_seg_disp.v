@@ -8,16 +8,9 @@ module ctrl_7_seg_disp #(
     input  wire        i_wren,
     input  wire [1:0]  i_mask,
 
-    output wire        o_stcp,
-    output wire        o_shcp,
-    output wire        o_ds,
-    output wire        o_oe
+    output wire [3:0]  o_digs,
+    output wire [7:0]  o_segs
 );
-
-wire  [3:0] anodes;
-wire  [7:0] segments;
-
-wire shift_done;
 
 reg [15:0] data;
 
@@ -36,20 +29,8 @@ hex_display #(
     .clk        (clk),
     .rst_n      (rst_n),
     .i_data     (data),
-    .i_rdy      (shift_done),
-    .o_anodes   (anodes),
-    .o_segments (segments)
-);
-
-ctrl_74hc595 ctrl(
-    .clk    (clk                ),
-    .rst_n  (rst_n              ),
-    .i_data ({segments, anodes} ),
-    .o_stcp (o_stcp             ),
-    .o_shcp (o_shcp             ),
-    .o_ds   (o_ds               ),
-    .o_oe   (o_oe               ),
-    .o_done (shift_done         )
+    .o_anodes   (o_digs),
+    .o_segments (o_segs)
 );
 
 endmodule
