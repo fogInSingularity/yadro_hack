@@ -19,7 +19,7 @@ int main(void)
 
     while (1) {
         *disp = i++;
-        sleep_ms(500);
+        sleep_ms(50);
     }
 }
 
