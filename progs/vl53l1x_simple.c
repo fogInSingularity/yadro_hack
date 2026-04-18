@@ -1,12 +1,7 @@
 #include "vl53l1x_simple.h"
+#include "i2c.h"
 
 #include <stddef.h>
-
-/*
- * Your I2C wrapper API.
- */
-extern bool write_burst(uint8_t addr, const uint8_t* data, size_t len);
-extern bool read_burst(uint8_t addr, uint8_t* data, size_t len);
 
 /*
  * Replace this with a real delay if you have one:
