@@ -22,12 +22,6 @@ static volatile uint8_t* const busy_o           = (uint8_t*)0x44;
 #define I2C_TIMEOUT_ITER 1000000u
 #endif
 
-static bool i2c_start(void);
-static bool i2c_restart(void);
-static bool i2c_stop(void);
-static bool i2c_write_byte(uint8_t byte);
-static bool i2c_read_byte(uint8_t* byte, bool send_nack);
-
 static bool i2c_wait_ready(void)
 {
     uint32_t timeout = I2C_TIMEOUT_ITER;
@@ -169,22 +163,22 @@ static bool i2c_prepare_transaction(void)
  * Level 1: private byte-level primitives
  * ========================================================================= */
 
-static bool i2c_start(void)
+bool i2c_start(void)
 {
     return i2c_exec_cmd(I2C_CMD_START, 0u);
 }
 
-static bool i2c_restart(void)
+bool i2c_restart(void)
 {
     return i2c_exec_cmd(I2C_CMD_RESTART, 0u);
 }
 
-static bool i2c_stop(void)
+bool i2c_stop(void)
 {
     return i2c_exec_cmd(I2C_CMD_STOP, 0u);
 }
 
-static bool i2c_write_byte(uint8_t byte)
+bool i2c_write_byte(uint8_t byte)
 {
     if (!i2c_exec_cmd(I2C_CMD_WRITE, byte)) {
         return false;
@@ -194,7 +188,7 @@ static bool i2c_write_byte(uint8_t byte)
     return (((*rx_ack_o) & 1u) == 0u);
 }
 
-static bool i2c_read_byte(uint8_t* byte, bool send_nack)
+bool i2c_read_byte(uint8_t* byte, bool send_nack)
 {
     if (byte == NULL) {
         return false;

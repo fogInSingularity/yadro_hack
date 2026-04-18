@@ -3,6 +3,167 @@
 
 #include <stddef.h>
 
+#define VL53L1X_KEEP_SYMBOL __attribute__((used, noinline, externally_visible))
+/*
+ * Small software helpers for RV32I builds without libgcc mul/div support.
+ * These symbols intentionally use the libgcc names so GCC/LTO can resolve
+ * compiler-generated helper calls during the final link.
+ */
+
+ typedef union {
+    uint64_t u64;
+    struct {
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+        uint32_t lo;
+        uint32_t hi;
+#else
+        uint32_t hi;
+        uint32_t lo;
+#endif
+    } w;
+} vl53l1x_u64_words_t;
+
+VL53L1X_KEEP_SYMBOL uint64_t __ashldi3(uint64_t value, int shift)
+{
+    vl53l1x_u64_words_t in;
+    vl53l1x_u64_words_t out;
+    uint32_t s;
+
+    in.u64 = value;
+    out.w.lo = 0u;
+    out.w.hi = 0u;
+
+    if (shift <= 0) {
+        return value;
+    }
+
+    s = (uint32_t)shift;
+
+    if (s >= 64u) {
+        return 0u;
+    }
+
+    if (s >= 32u) {
+        out.w.hi = in.w.lo << (s - 32u);
+        return out.u64;
+    }
+
+    out.w.hi = (in.w.hi << s) | (in.w.lo >> (32u - s));
+    out.w.lo = in.w.lo << s;
+
+    return out.u64;
+}
+
+VL53L1X_KEEP_SYMBOL uint64_t __lshrdi3(uint64_t value, int shift)
+{
+    vl53l1x_u64_words_t in;
+    vl53l1x_u64_words_t out;
+    uint32_t s;
+
+    in.u64 = value;
+    out.w.lo = 0u;
+    out.w.hi = 0u;
+
+    if (shift <= 0) {
+        return value;
+    }
+
+    s = (uint32_t)shift;
+
+    if (s >= 64u) {
+        return 0u;
+    }
+
+    if (s >= 32u) {
+        out.w.lo = in.w.hi >> (s - 32u);
+        return out.u64;
+    }
+
+    out.w.lo = (in.w.lo >> s) | (in.w.hi << (32u - s));
+    out.w.hi = in.w.hi >> s;
+
+    return out.u64;
+}
+
+static uint32_t vl53l1x_soft_mul_u32(uint32_t a, uint32_t b)
+{
+    uint32_t result = 0u;
+
+    while (b != 0u) {
+        if ((b & 1u) != 0u) {
+            result += a;
+        }
+
+        a <<= 1;
+        b >>= 1;
+    }
+
+    return result;
+}
+
+static uint32_t vl53l1x_soft_udiv_u32(uint32_t numerator, uint32_t denominator)
+{
+    uint32_t quotient = 0u;
+    uint32_t remainder = 0u;
+
+    if (denominator == 0u) {
+        return 0u;
+    }
+
+    for (int bit = 31; bit >= 0; --bit) {
+        remainder <<= 1;
+        remainder |= (numerator >> bit) & 1u;
+
+        if (remainder >= denominator) {
+            remainder -= denominator;
+            quotient |= ((uint32_t)1u << bit);
+        }
+    }
+
+    return quotient;
+}
+
+static uint64_t vl53l1x_soft_udiv_u64(uint64_t numerator, uint64_t denominator)
+{
+    uint64_t quotient = 0u;
+    uint64_t remainder = 0u;
+
+    if (denominator == 0u) {
+        return 0u;
+    }
+
+    for (int bit = 63; bit >= 0; --bit) {
+        remainder <<= 1;
+        remainder |= (numerator >> bit) & 1u;
+
+        if (remainder >= denominator) {
+            remainder -= denominator;
+            quotient |= (((uint64_t)1u) << bit);
+        }
+    }
+
+    return quotient;
+}
+
+/*
+ * Export the usual libgcc helper names.
+ * Do not make these static.
+ */
+VL53L1X_KEEP_SYMBOL uint32_t __mulsi3(uint32_t a, uint32_t b)
+{
+    return vl53l1x_soft_mul_u32(a, b);
+}
+
+VL53L1X_KEEP_SYMBOL uint32_t __udivsi3(uint32_t numerator, uint32_t denominator)
+{
+    return vl53l1x_soft_udiv_u32(numerator, denominator);
+}
+
+VL53L1X_KEEP_SYMBOL uint64_t __udivdi3(uint64_t numerator, uint64_t denominator)
+{
+    return vl53l1x_soft_udiv_u64(numerator, denominator);
+}
+
 /*
  * Replace this with a real delay if you have one:
  *
@@ -13,8 +174,13 @@
 #ifndef VL53L1X_DELAY_US
 static void vl53l1x_default_delay_us(uint32_t us)
 {
-    volatile uint32_t n = us * 8u;
-    while (n-- != 0u) { }
+    const volatile uint32_t loops_per_ms = 50000;
+
+    for (uint32_t m = 0; m < us; ++m) {
+        for (volatile uint32_t i = 0; i < loops_per_ms; ++i) {
+            __asm__ volatile ("" ::: "memory");
+        }
+    }
 }
 #define VL53L1X_DELAY_US(us) vl53l1x_default_delay_us((uint32_t)(us))
 #endif
