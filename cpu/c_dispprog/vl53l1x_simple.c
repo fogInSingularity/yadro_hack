@@ -630,6 +630,7 @@ static bool vl53l1x_update_dss(const struct vl53l1x_results *r)
 /* Public API                                                                */
 /* ------------------------------------------------------------------------- */
 
+volatile uint16_t* disp = (uint16_t*)0x20;
 bool vl53l1x_init(void)
 {
     uint8_t tmp8;
@@ -642,56 +643,67 @@ bool vl53l1x_init(void)
     osc_calibrate_val = 0u;
 
     if (!vl53l1x_read16(REG_IDENTIFICATION__MODEL_ID, &tmp16)) {
+        *disp = 0x1111;
         return false;
     }
 
     if (tmp16 != 0xEACCu) {
+        *disp = 0x1112;
         return false;
     }
 
     if (!vl53l1x_write8(REG_SOFT_RESET, 0x00u)) {
+        *disp = 0x1113;
         return false;
     }
 
     VL53L1X_DELAY_US(100u);
 
     if (!vl53l1x_write8(REG_SOFT_RESET, 0x01u)) {
+        *disp = 0x1114;
         return false;
     }
 
     VL53L1X_DELAY_US(1000u);
 
     if (!vl53l1x_wait_boot()) {
+        *disp = 0x1115;
         return false;
     }
 
 #if VL53L1X_USE_2V8
     if (!vl53l1x_read8(REG_PAD_I2C_HV__EXTSUP_CONFIG, &tmp8)) {
+        *disp = 0x1116;
         return false;
     }
 
     if (!vl53l1x_write8(REG_PAD_I2C_HV__EXTSUP_CONFIG,
                         (uint8_t)(tmp8 | 0x01u))) {
+        *disp = 0x1117;
         return false;
     }
 #endif
 
     if (!vl53l1x_read16(REG_OSC_MEASURED__FAST_OSC__FREQUENCY,
                         &fast_osc_frequency)) {
+        *disp = 0x1118;
         return false;
     }
 
     if (!vl53l1x_read16(REG_RESULT__OSC_CALIBRATE_VAL,
                         &osc_calibrate_val)) {
+        *disp = 0x1119;
         return false;
     }
 
     if ((fast_osc_frequency == 0u) || (osc_calibrate_val == 0u)) {
+        *disp = 0x111a;
         return false;
     }
 
     if (!vl53l1x_write16(REG_DSS_CONFIG__TARGET_TOTAL_RATE_MCPS,
                          VL53L1X_TARGET_RATE)) {
+        *disp = 0x111b;
         return false;
     }
 

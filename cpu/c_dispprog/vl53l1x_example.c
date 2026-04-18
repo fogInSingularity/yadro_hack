@@ -4,11 +4,12 @@ volatile uint16_t* disp = (uint16_t*)0x20;
 
 int main(void)
 {
+    int a = 0;
     uint16_t distance_mm;
 
     if (!vl53l1x_init()) {
         while (1) {
-            *disp = 0xFFF1;
+            a = a + 1;
         }
     }
 
