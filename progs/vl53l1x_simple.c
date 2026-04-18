@@ -3,15 +3,10 @@
 #include <stddef.h>
 
 /*
- * Functions from your I2C wrapper.
- *
- * Keep these non-static in your I2C wrapper, or put them in an i2c.h header.
+ * Your I2C wrapper API.
  */
-extern bool i2c_start(void);
-extern bool i2c_restart(void);
-extern bool i2c_stop(void);
-extern bool i2c_write_byte(uint8_t byte);
-extern bool i2c_read_byte(uint8_t *byte, bool send_nack);
+extern bool write_burst(uint8_t addr, const uint8_t* data, size_t len);
+extern bool read_burst(uint8_t addr, uint8_t* data, size_t len);
 
 /*
  * Replace this with a real delay if you have one:
@@ -35,7 +30,7 @@ static void vl53l1x_default_delay_us(uint32_t us)
 
 #define VL53L1X_TARGET_RATE                 0x0A00u
 #define VL53L1X_TIMING_GUARD_US            4528u
-#define VL53L1X_RESULT_BUF_LEN             17u
+#define VL53L1X_RESULT_BUF_LEN               17u
 
 #define REG_SOFT_RESET                                      0x0000u
 #define REG_OSC_MEASURED__FAST_OSC__FREQUENCY              0x0006u
@@ -88,7 +83,7 @@ static void vl53l1x_default_delay_us(uint32_t us)
 #define REG_FIRMWARE__SYSTEM_STATUS                         0x00E5u
 #define REG_IDENTIFICATION__MODEL_ID                        0x010Fu
 
-#define VL53L1X_RANGE_STATUS_COMPLETE                       9u
+#define VL53L1X_RANGE_STATUS_COMPLETE                         9u
 
 struct vl53l1x_results {
     uint8_t  range_status;
@@ -105,113 +100,72 @@ static bool calibrated;
 static uint8_t saved_vhv_init;
 static uint8_t saved_vhv_timeout;
 
-static bool vl53l1x_write_multi(uint16_t reg, const uint8_t *data, uint8_t len)
-{
-    if ((data == NULL) || (len == 0u)) {
-        return false;
-    }
 
-    if (!i2c_start()) {
-        return false;
-    }
-
-    if (!i2c_write_byte((uint8_t)((VL53L1X_ADDR << 1) | 0u))) {
-        (void)i2c_stop();
-        return false;
-    }
-
-    if (!i2c_write_byte((uint8_t)(reg >> 8))) {
-        (void)i2c_stop();
-        return false;
-    }
-
-    if (!i2c_write_byte((uint8_t)reg)) {
-        (void)i2c_stop();
-        return false;
-    }
-
-    for (uint8_t i = 0; i < len; i++) {
-        if (!i2c_write_byte(data[i])) {
-            (void)i2c_stop();
-            return false;
-        }
-    }
-
-    return i2c_stop();
-}
-
-static bool vl53l1x_read_multi(uint16_t reg, uint8_t *data, uint8_t len)
-{
-    if ((data == NULL) || (len == 0u)) {
-        return false;
-    }
-
-    if (!i2c_start()) {
-        return false;
-    }
-
-    if (!i2c_write_byte((uint8_t)((VL53L1X_ADDR << 1) | 0u))) {
-        (void)i2c_stop();
-        return false;
-    }
-
-    if (!i2c_write_byte((uint8_t)(reg >> 8))) {
-        (void)i2c_stop();
-        return false;
-    }
-
-    if (!i2c_write_byte((uint8_t)reg)) {
-        (void)i2c_stop();
-        return false;
-    }
-
-    if (!i2c_restart()) {
-        (void)i2c_stop();
-        return false;
-    }
-
-    if (!i2c_write_byte((uint8_t)((VL53L1X_ADDR << 1) | 1u))) {
-        (void)i2c_stop();
-        return false;
-    }
-
-    for (uint8_t i = 0; i < len; i++) {
-        bool send_nack = (i == (uint8_t)(len - 1u));
-
-        if (!i2c_read_byte(&data[i], send_nack)) {
-            (void)i2c_stop();
-            return false;
-        }
-    }
-
-    return i2c_stop();
-}
+/* ------------------------------------------------------------------------- */
+/* Low-level register access via write_burst/read_burst                      */
+/* ------------------------------------------------------------------------- */
 
 static bool vl53l1x_write8(uint16_t reg, uint8_t value)
 {
-    return vl53l1x_write_multi(reg, &value, 1u);
+    uint8_t buf[3];
+
+    buf[0] = (uint8_t)(reg >> 8);
+    buf[1] = (uint8_t)reg;
+    buf[2] = value;
+
+    return write_burst(VL53L1X_ADDR, buf, sizeof(buf));
 }
 
 static bool vl53l1x_write16(uint16_t reg, uint16_t value)
 {
-    uint8_t data[2];
+    uint8_t buf[4];
 
-    data[0] = (uint8_t)(value >> 8);
-    data[1] = (uint8_t)value;
+    buf[0] = (uint8_t)(reg >> 8);
+    buf[1] = (uint8_t)reg;
+    buf[2] = (uint8_t)(value >> 8);
+    buf[3] = (uint8_t)value;
 
-    return vl53l1x_write_multi(reg, data, 2u);
+    return write_burst(VL53L1X_ADDR, buf, sizeof(buf));
 }
 
 static bool vl53l1x_write32(uint16_t reg, uint32_t value)
 {
-    uint8_t data[4];
+    uint8_t buf[6];
 
-    data[0] = (uint8_t)(value >> 24);
-    data[1] = (uint8_t)(value >> 16);
-    data[2] = (uint8_t)(value >> 8);
-    data[3] = (uint8_t)value;
+    buf[0] = (uint8_t)(reg >> 8);
+    buf[1] = (uint8_t)reg;
+    buf[2] = (uint8_t)(value >> 24);
+    buf[3] = (uint8_t)(value >> 16);
+    buf[4] = (uint8_t)(value >> 8);
+    buf[5] = (uint8_t)value;
 
-    return vl53l1x_write_multi(reg, data, 4u);
+    return write_burst(VL53L1X_ADDR, buf, sizeof(buf));
+}
+
+/*
+ * Register reads are done as:
+ *   1) write_burst(addr, reg_hi, reg_lo)
+ *   2) read_burst(addr, data...)
+ *
+ * This is two I2C transactions, not a repeated-start combined transaction.
+ * That matches the behavior of the original Arduino code.
+ */
+static bool vl53l1x_read_multi(uint16_t reg, uint8_t *data, size_t len)
+{
+    uint8_t reg_buf[2];
+
+    if ((len > 0u) && (data == NULL)) {
+        return false;
+    }
+
+    reg_buf[0] = (uint8_t)(reg >> 8);
+    reg_buf[1] = (uint8_t)reg;
+
+    if (!write_burst(VL53L1X_ADDR, reg_buf, sizeof(reg_buf))) {
+        return false;
+    }
+
+    return read_burst(VL53L1X_ADDR, data, len);
 }
 
 static bool vl53l1x_read8(uint16_t reg, uint8_t *value)
@@ -221,20 +175,24 @@ static bool vl53l1x_read8(uint16_t reg, uint8_t *value)
 
 static bool vl53l1x_read16(uint16_t reg, uint16_t *value)
 {
-    uint8_t data[2];
+    uint8_t buf[2];
 
     if (value == NULL) {
         return false;
     }
 
-    if (!vl53l1x_read_multi(reg, data, 2u)) {
+    if (!vl53l1x_read_multi(reg, buf, sizeof(buf))) {
         return false;
     }
 
-    *value = ((uint16_t)data[0] << 8) | data[1];
-
+    *value = ((uint16_t)buf[0] << 8) | buf[1];
     return true;
 }
+
+
+/* ------------------------------------------------------------------------- */
+/* Timing helpers                                                            */
+/* ------------------------------------------------------------------------- */
 
 static uint32_t vl53l1x_timeout_us_to_mclks(uint32_t timeout_us,
                                             uint32_t macro_period_us)
@@ -243,8 +201,8 @@ static uint32_t vl53l1x_timeout_us_to_mclks(uint32_t timeout_us,
         return 0u;
     }
 
-    return (uint32_t)(((((uint64_t)timeout_us << 12) +
-                       (macro_period_us >> 1)) / macro_period_us));
+    return (uint32_t)((((uint64_t)timeout_us << 12) +
+                      (macro_period_us >> 1)) / macro_period_us);
 }
 
 static uint16_t vl53l1x_encode_timeout(uint32_t timeout_mclks)
@@ -311,7 +269,6 @@ static bool vl53l1x_set_measurement_timing_budget(uint32_t budget_us)
     }
 
     macro_period_us = vl53l1x_calc_macro_period(vcsel_period);
-
     if (macro_period_us == 0u) {
         return false;
     }
@@ -348,7 +305,6 @@ static bool vl53l1x_set_measurement_timing_budget(uint32_t budget_us)
     }
 
     macro_period_us = vl53l1x_calc_macro_period(vcsel_period);
-
     if (macro_period_us == 0u) {
         return false;
     }
@@ -404,11 +360,16 @@ static bool vl53l1x_set_long_distance_mode(void)
     return vl53l1x_set_measurement_timing_budget(VL53L1X_TIMING_BUDGET_US);
 }
 
+
+/* ------------------------------------------------------------------------- */
+/* Sensor helpers                                                            */
+/* ------------------------------------------------------------------------- */
+
 static bool vl53l1x_wait_boot(void)
 {
     uint8_t status = 0u;
 
-    for (uint32_t i = 0; i < VL53L1X_BOOT_POLL_COUNT; i++) {
+    for (uint32_t i = 0u; i < VL53L1X_BOOT_POLL_COUNT; ++i) {
         if (vl53l1x_read8(REG_FIRMWARE__SYSTEM_STATUS, &status) &&
             ((status & 0x01u) != 0u)) {
             return true;
@@ -432,11 +393,7 @@ static bool vl53l1x_data_ready(bool *ready)
         return false;
     }
 
-    /*
-     * Interrupt is active low with the configuration used here.
-     */
     *ready = ((gpio_status & 0x01u) == 0u);
-
     return true;
 }
 
@@ -448,9 +405,7 @@ static bool vl53l1x_read_results(struct vl53l1x_results *r)
         return false;
     }
 
-    if (!vl53l1x_read_multi(REG_RESULT__RANGE_STATUS,
-                            b,
-                            VL53L1X_RESULT_BUF_LEN)) {
+    if (!vl53l1x_read_multi(REG_RESULT__RANGE_STATUS, b, sizeof(b))) {
         return false;
     }
 
@@ -537,8 +492,7 @@ static bool vl53l1x_update_dss(const struct vl53l1x_results *r)
 
         if (total_rate_per_spad != 0u) {
             uint32_t required_spads =
-                ((uint32_t)VL53L1X_TARGET_RATE << 16) /
-                total_rate_per_spad;
+                ((uint32_t)VL53L1X_TARGET_RATE << 16) / total_rate_per_spad;
 
             if (required_spads > 0xFFFFu) {
                 required_spads = 0xFFFFu;
@@ -553,6 +507,11 @@ static bool vl53l1x_update_dss(const struct vl53l1x_results *r)
     return vl53l1x_write16(REG_DSS_CONFIG__MANUAL_EFFECTIVE_SPADS_SELECT,
                            0x8000u);
 }
+
+
+/* ------------------------------------------------------------------------- */
+/* Public API                                                                */
+/* ------------------------------------------------------------------------- */
 
 bool vl53l1x_init(void)
 {
@@ -725,9 +684,6 @@ bool vl53l1x_init(void)
         return false;
     }
 
-    /*
-     * 0x40 = timed continuous ranging mode.
-     */
     if (!vl53l1x_write8(REG_SYSTEM__MODE_START, 0x40u)) {
         return false;
     }
@@ -769,10 +725,6 @@ vl53l1x_poll_result_t vl53l1x_poll(uint16_t *range_mm)
         return VL53L1X_POLL_ERROR;
     }
 
-    /*
-     * Same correction gain used by the Pololu library:
-     * range * 2011 / 2048, rounded.
-     */
     corrected_range =
         ((uint32_t)r.final_crosstalk_corrected_range_mm_sd0 * 2011u +
          0x0400u) / 0x0800u;
@@ -791,9 +743,5 @@ vl53l1x_poll_result_t vl53l1x_poll(uint16_t *range_mm)
         return VL53L1X_POLL_OK;
     }
 
-    /*
-     * A sample was read and range_mm was updated, but the sensor status was
-     * not normal RangeComplete.
-     */
     return VL53L1X_POLL_INVALID;
 }
