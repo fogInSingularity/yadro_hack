@@ -1,7 +1,7 @@
 PROJECT_ROOT:=$(abspath .)
 export PROJECT_ROOT
 
-TASK_NAME?=08_cpu
+TASK_NAME?=03_hex_display
 TB_NAME?=system_top_tb
 DEFINES_RAW?=
 RAND_SEED?=25

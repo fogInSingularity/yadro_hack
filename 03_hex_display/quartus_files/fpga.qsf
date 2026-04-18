@@ -42,7 +42,7 @@
 # ========================
 set_global_assignment -name PROJECT_OUTPUT_DIRECTORY output
 set_global_assignment -name LAST_QUARTUS_VERSION "23.1std.1 Lite Edition"
-set_global_assignment -name SMART_RECOMPILE OFF
+# set_global_assignment -name SMART_RECOMPILE OFF
 set_global_assignment -name VERILOG_INPUT_VERSION SYSTEMVERILOG_2005
 
 set_global_assignment -name SEARCH_PATH ../src
@@ -50,22 +50,32 @@ set_global_assignment -name SEARCH_PATH ../inc
 set_global_assignment -name SDC_FILE fpga.sdc
 set_global_assignment -name VERILOG_FILE fpga_top.v
 
-set_global_assignment -name QIP_FILE ip/pll.qip
-set_global_assignment -name QIP_FILE ip/imem1r32x256.qip
-set_global_assignment -name QIP_FILE ip/ram1rw32x256.qip
-
 set_global_assignment -name NUM_PARALLEL_PROCESSORS ALL
-
-set_global_assignment -name OPTIMIZATION_MODE "HIGH PERFORMANCE EFFORT"
 
 # Pin & Location Assignments
 # ==========================
-set_location_assignment PIN_T22 -to CLK
-set_location_assignment PIN_U20 -to RSTN
-set_location_assignment PIN_AA1 -to DS
-set_location_assignment PIN_Y2 -to OE
-set_location_assignment PIN_W1 -to SHCP
-set_location_assignment PIN_Y1 -to STCP
+set_location_assignment PIN_23 -to CLK
+set_location_assignment PIN_25 -to RESET
+
+set_location_assignment PIN_127 -to SEGS[0]
+set_location_assignment PIN_124 -to SEGS[1]
+set_location_assignment PIN_126 -to SEGS[2]
+set_location_assignment PIN_132 -to SEGS[3]
+set_location_assignment PIN_129 -to SEGS[4]
+set_location_assignment PIN_125 -to SEGS[5]
+set_location_assignment PIN_121 -to SEGS[6]
+set_location_assignment PIN_128 -to SEGS[7]
+
+set_location_assignment PIN_133 -to DIGS[0]
+set_location_assignment PIN_135 -to DIGS[1]
+set_location_assignment PIN_136 -to DIGS[2]
+set_location_assignment PIN_137 -to DIGS[3]
+
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to *
+
+# set_location_assignment PIN_99  -to I2C_SCL
+# set_location_assignment PIN_98  -to I2C_SDA
+
 
 # Classic Timing Assignments
 # ==========================
@@ -81,7 +91,7 @@ set_global_assignment -name TOP_LEVEL_ENTITY fpga_top
 # Fitter Assignments
 # ==================
 set_global_assignment -name RESERVE_ALL_UNUSED_PINS_WEAK_PULLUP "AS INPUT TRI-STATED"
-set_global_assignment -name DEVICE EP4CE15F23C8
+set_global_assignment -name DEVICE EP4CE6E22C8
 set_global_assignment -name ERROR_CHECK_FREQUENCY_DIVISOR 1
 
 # EDA Netlist Writer Assignments
@@ -141,6 +151,5 @@ set_global_assignment -name PARTITION_COLOR 16764057 -section_id Top
 # end ENTITY(fpga_top)
 # --------------------
 set_global_assignment -name VERILOG_SHOW_LMF_MAPPING_MESSAGES OFF
-
 
 set_instance_assignment -name PARTITION_HIERARCHY root_partition -to | -section_id Top
