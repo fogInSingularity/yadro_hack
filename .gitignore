@@ -1,0 +1,17 @@
+sim
+*.vcd
+docs
+*.hex
+*.gtkw
+out_prog
+*.bak
+
+**/quartus_files/**
+!fpga_top.v
+!fpga.qpf
+!fpga.qsf
+!fpga.sdc
+!*.qip
+!*.ppf
+!*.v
+!**/quartus_files/ip
