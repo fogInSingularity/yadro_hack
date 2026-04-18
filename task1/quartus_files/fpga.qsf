@@ -73,8 +73,8 @@ set_location_assignment PIN_137 -to DIGS[3]
 
 set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to *
 
-# set_location_assignment PIN_112 -to SCL
-# set_location_assignment PIN_113 -to SDA
+set_location_assignment PIN_112 -to SCL
+set_location_assignment PIN_113 -to SDA
 
 
 # Classic Timing Assignments

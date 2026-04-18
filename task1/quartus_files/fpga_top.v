@@ -3,10 +3,10 @@ module fpga_top(
     input  wire RESET,
     
     output wire [3:0] DIGS,
-    output wire [7:0] SEGS//,
+    output wire [7:0] SEGS,
 
-    // inout wire SDA,
-    // inout wire SCL
+    inout wire SDA,
+    inout wire SCL
 );
 
 reg rst, RST_d;
@@ -22,8 +22,8 @@ assign rst_n = rst;
 system_top system_top_inst (
     .clk     (CLK),
     .rst_n   (rst_n),
-    // .sda_io  (SDA),
-    // .scl_io  (SCL),
+    .sda_io  (SDA),
+    .scl_io  (SCL),
     .digs    (DIGS),
     .segs    (SEGS)
 );
