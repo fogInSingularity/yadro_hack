@@ -13,7 +13,7 @@
 #ifndef VL53L1X_DELAY_US
 static void vl53l1x_default_delay_us(uint32_t us)
 {
-    volatile uint32_t n = us * 8u;
+    volatile uint32_t n = us << 3;
     while (n-- != 0u) { }
 }
 #define VL53L1X_DELAY_US(us) vl53l1x_default_delay_us((uint32_t)(us))
@@ -186,18 +186,127 @@ static bool vl53l1x_read16(uint16_t reg, uint16_t *value)
 
 
 /* ------------------------------------------------------------------------- */
+/* Software arithmetic helpers for RV32I (no MUL/DIV instructions required)  */
+/* ------------------------------------------------------------------------- */
+
+static uint32_t vl53l1x_mul_u32_soft(uint32_t a, uint32_t b)
+{
+    uint32_t r = 0u;
+
+    while (b != 0u) {
+        if ((b & 1u) != 0u) {
+            r += a;
+        }
+
+        a <<= 1;
+        b >>= 1;
+    }
+
+    return r;
+}
+
+static uint32_t vl53l1x_divmod_u32_soft(uint32_t num,
+                                        uint32_t den,
+                                        uint32_t *rem_out)
+{
+    uint32_t q = 0u;
+    uint32_t bit = 1u;
+
+    if (den == 0u) {
+        if (rem_out != NULL) {
+            *rem_out = 0u;
+        }
+        return 0u;
+    }
+
+    while ((den < num) && ((den & 0x80000000u) == 0u)) {
+        den <<= 1;
+        bit <<= 1;
+    }
+
+    while (bit != 0u) {
+        if (num >= den) {
+            num -= den;
+            q |= bit;
+        }
+
+        den >>= 1;
+        bit >>= 1;
+    }
+
+    if (rem_out != NULL) {
+        *rem_out = num;
+    }
+
+    return q;
+}
+
+static uint32_t vl53l1x_div_shift12_round_u32(uint32_t num, uint32_t den)
+{
+    uint32_t q;
+    uint32_t rem;
+    uint32_t frac = 0u;
+    uint32_t half_floor;
+    uint32_t half_ceil;
+    uint8_t i;
+
+    if (den == 0u) {
+        return 0u;
+    }
+
+    q = vl53l1x_divmod_u32_soft(num, den, &rem);
+
+    if (q > 0x000FFFFFu) {
+        return 0xFFFFFFFFu;
+    }
+
+    q <<= 12;
+
+    half_floor = den >> 1;
+    half_ceil = half_floor + (den & 1u);
+
+    for (i = 0u; i < 12u; ++i) {
+        frac <<= 1;
+
+        if (rem >= half_ceil) {
+            frac |= 1u;
+
+            if ((den & 1u) == 0u) {
+                rem = (rem - half_floor) << 1;
+            } else {
+                rem = ((rem - half_ceil) << 1) | 1u;
+            }
+        } else {
+            rem <<= 1;
+        }
+    }
+
+    q += frac;
+
+    if (rem >= half_ceil) {
+        if (q != 0xFFFFFFFFu) {
+            q++;
+        }
+    }
+
+    return q;
+}
+
+static uint32_t vl53l1x_mul_u32_2011(uint32_t x)
+{
+    return (x << 10) + (x << 9) + (x << 8) + (x << 7) +
+           (x << 6) + (x << 4) + (x << 3) + (x << 1) + x;
+}
+
+
+/* ------------------------------------------------------------------------- */
 /* Timing helpers                                                            */
 /* ------------------------------------------------------------------------- */
 
 static uint32_t vl53l1x_timeout_us_to_mclks(uint32_t timeout_us,
                                             uint32_t macro_period_us)
 {
-    if (macro_period_us == 0u) {
-        return 0u;
-    }
-
-    return (uint32_t)((((uint64_t)timeout_us << 12) +
-                      (macro_period_us >> 1)) / macro_period_us);
+    return vl53l1x_div_shift12_round_u32(timeout_us, macro_period_us);
 }
 
 static uint16_t vl53l1x_encode_timeout(uint32_t timeout_mclks)
@@ -229,12 +338,16 @@ static uint32_t vl53l1x_calc_macro_period(uint8_t vcsel_period)
         return 0u;
     }
 
-    pll_period_us = ((uint32_t)1u << 30) / fast_osc_frequency;
+    pll_period_us = vl53l1x_divmod_u32_soft(((uint32_t)1u << 30),
+                                            fast_osc_frequency,
+                                            NULL);
+
     vcsel_period_pclks = (uint8_t)((vcsel_period + 1u) << 1);
 
-    macro_period_us = 2304u * pll_period_us;
+    macro_period_us = (pll_period_us << 11) + (pll_period_us << 8);
     macro_period_us >>= 6;
-    macro_period_us *= vcsel_period_pclks;
+    macro_period_us = vl53l1x_mul_u32_soft(macro_period_us,
+                                           (uint32_t)vcsel_period_pclks);
     macro_period_us >>= 6;
 
     return macro_period_us;
@@ -257,7 +370,7 @@ static bool vl53l1x_set_measurement_timing_budget(uint32_t budget_us)
         return false;
     }
 
-    range_config_timeout_us /= 2u;
+    range_config_timeout_us >>= 1;
 
     if (!vl53l1x_read8(REG_RANGE_CONFIG__VCSEL_PERIOD_A, &vcsel_period)) {
         return false;
@@ -482,12 +595,16 @@ static bool vl53l1x_update_dss(const struct vl53l1x_results *r)
             total_rate_per_spad = 0xFFFFu;
         }
 
-        total_rate_per_spad <<= 16;
-        total_rate_per_spad /= spad_count;
+        total_rate_per_spad =
+            vl53l1x_divmod_u32_soft(total_rate_per_spad << 16,
+                                    spad_count,
+                                    NULL);
 
         if (total_rate_per_spad != 0u) {
             uint32_t required_spads =
-                ((uint32_t)VL53L1X_TARGET_RATE << 16) / total_rate_per_spad;
+                vl53l1x_divmod_u32_soft(((uint32_t)VL53L1X_TARGET_RATE << 16),
+                                        total_rate_per_spad,
+                                        NULL);
 
             if (required_spads > 0xFFFFu) {
                 required_spads = 0xFFFFu;
@@ -665,13 +782,14 @@ bool vl53l1x_init(void)
     }
 
     if (!vl53l1x_write16(REG_ALGO__PART_TO_PART_RANGE_OFFSET_MM,
-                         (uint16_t)(tmp16 * 4u))) {
+                         (uint16_t)((uint32_t)tmp16 << 2))) {
         return false;
     }
 
     if (!vl53l1x_write32(
             REG_SYSTEM__INTERMEASUREMENT_PERIOD,
-            (uint32_t)VL53L1X_INTERMEASUREMENT_MS * osc_calibrate_val)) {
+            vl53l1x_mul_u32_soft((uint32_t)VL53L1X_INTERMEASUREMENT_MS,
+                                 (uint32_t)osc_calibrate_val))) {
         return false;
     }
 
@@ -720,9 +838,10 @@ vl53l1x_poll_result_t vl53l1x_poll(uint16_t *range_mm)
         return VL53L1X_POLL_ERROR;
     }
 
-    corrected_range =
-        ((uint32_t)r.final_crosstalk_corrected_range_mm_sd0 * 2011u +
-         0x0400u) / 0x0800u;
+    corrected_range = vl53l1x_mul_u32_2011(
+                          (uint32_t)r.final_crosstalk_corrected_range_mm_sd0)
+                      + 0x0400u;
+    corrected_range >>= 11;
 
     if (corrected_range > 0xFFFFu) {
         corrected_range = 0xFFFFu;
