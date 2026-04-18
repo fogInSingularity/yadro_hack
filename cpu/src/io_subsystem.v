@@ -21,6 +21,11 @@ module io_subsystem #(
     output wire        o_sda_oen
 );
 
+reg [31:0] mmio_data_q;
+reg [31:0] mmio_data; // not a reg actually
+
+assign o_mmio_data = mmio_data_q;
+
 // ---------------------------------------
 // ------------- DISP 7 SEG --------------
 // ---------------------------------------
@@ -62,28 +67,31 @@ wire       i2c_o_arb_lost;
 reg        i2c_i_arb_lost_clear, i2c_i_arb_lost_clear_r;
 wire       i2c_o_busy;
 
-reg  i2c_cmd_valid_wren;
-reg  i2c_cmd_wren;
-reg  i2c_din_wren;
-reg  i2c_arb_lost_clear_wren;
+reg i2c_cmd_valid_wren;
+reg i2c_cmd_wren;
+reg i2c_din_wren;
+reg i2c_arb_lost_clear_wren;
 
 always @(*) begin
     case ({i_mmio_addr, 2'b0, i_mmio_mask})
-        {32'h30, 4'b0001}: o_mmio_data = {24'b0, i2c_o_dout};
-        {32'h34, 4'b0001}: o_mmio_data = {31'b0, i2c_o_rx_ack};
-        {32'h38, 4'b0001}: o_mmio_data = {31'b0, i2c_o_ready};
-        {32'h3C, 4'b0001}: o_mmio_data = {31'b0, i2c_o_arb_lost};
-        {32'h44, 4'b0001}: o_mmio_data = {31'b0, i2c_o_busy};
-        default:           o_mmio_data = 32'bx;
+        {32'h30, 4'b0001}: mmio_data = {24'b0, i2c_o_dout};
+        {32'h34, 4'b0001}: mmio_data = {31'b0, i2c_o_rx_ack};
+        {32'h38, 4'b0001}: mmio_data = {31'b0, i2c_o_ready};
+        {32'h3C, 4'b0001}: mmio_data = {31'b0, i2c_o_arb_lost};
+        {32'h44, 4'b0001}: mmio_data = {31'b0, i2c_o_busy};
+        default:           mmio_data = 32'bx;
     endcase
 end
 
-always @(*) begin
-    i2c_i_cmd_valid      = '0;
-    i2c_i_cmd            = '0;
-    i2c_i_din            = '0;
-    i2c_i_arb_lost_clear = '0;
+always @(posedge clk) begin
+    mmio_data_q <= mmio_data;
+end
 
+always @(*) begin
+    i2c_i_cmd_valid         = '0;
+    i2c_i_cmd               = '0;
+    i2c_i_din               = '0;
+    i2c_i_arb_lost_clear    = '0;
     i2c_cmd_valid_wren      = 1'b0;    
     i2c_cmd_wren            = 1'b0;
     i2c_din_wren            = 1'b0;
@@ -105,6 +113,16 @@ always @(*) begin
         {32'h40, 4'b???1}: begin 
             i2c_i_arb_lost_clear    = i_mmio_data[0];
             i2c_arb_lost_clear_wren = 1'b1; 
+        end
+        default: begin
+            i2c_i_cmd_valid         = '0;
+            i2c_i_cmd               = '0;
+            i2c_i_din               = '0;
+            i2c_i_arb_lost_clear    = '0;
+            i2c_cmd_valid_wren      = 1'b0;
+            i2c_cmd_wren            = 1'b0;
+            i2c_din_wren            = 1'b0;
+            i2c_arb_lost_clear_wren = 1'b0;
         end
     endcase
 end
@@ -146,17 +164,15 @@ i2c_master_core i2c_master_core_inst (
     .sda_oen_o          (o_sda_oen)
 );
 
-reg [15:0] i2c_prescale_r;       // PRESCALE
 reg [15:0] i2c_prescale_cnt_r;
 reg        i2c_core_ena_r;
 
 always @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
-        i2c_prescale_r     <= I2C_PRESCALE;
         i2c_prescale_cnt_r <= 16'd0;
         i2c_core_ena_r     <= 1'b0;
     end else if (i2c_prescale_cnt_r == 16'd0) begin
-        i2c_prescale_cnt_r <= i2c_prescale_r;
+        i2c_prescale_cnt_r <= I2C_PRESCALE;
         i2c_core_ena_r     <= 1'b1;
     end else begin
         i2c_prescale_cnt_r <= i2c_prescale_cnt_r - 16'd1;

@@ -75,8 +75,8 @@ set_location_assignment PIN_135 -to DIGS[1]
 set_location_assignment PIN_136 -to DIGS[2]
 set_location_assignment PIN_137 -to DIGS[3]
 
-set_location_assignment PIN_77 -to I2C_SCL
-set_location_assignment PIN_76 -to I2C_SDA
+set_location_assignment PIN_77 -to SCL
+set_location_assignment PIN_76 -to SDA
 
 set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to *
 
