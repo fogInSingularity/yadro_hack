@@ -61,7 +61,7 @@ DEFINES:=$(addprefix -D,$(DEFINES_RAW))
 # VERILATOR
 
 VERILATOR_LINT_OPTS:= --lint-only --Wall \
-					  --Wno-procassinit --Wno-unusedsignal --Wno-unusedparam\
+					  --Wno-unusedsignal --Wno-unusedparam\
 					  --timing --sv --timescale 1ns/1ps $(INCDIR_BASIC_OPT) --top $(TB_NAME)\
 					  -D__ICARUS__
 
