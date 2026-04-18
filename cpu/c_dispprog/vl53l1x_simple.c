@@ -174,7 +174,7 @@ VL53L1X_KEEP_SYMBOL uint64_t __udivdi3(uint64_t numerator, uint64_t denominator)
 #ifndef VL53L1X_DELAY_US
 static void vl53l1x_default_delay_us(uint32_t us)
 {
-    const volatile uint32_t loops_per_ms = 50000;
+    const volatile uint32_t loops_per_ms = 150000;
 
     for (uint32_t m = 0; m < us; ++m) {
         for (volatile uint32_t i = 0; i < loops_per_ms; ++i) {
@@ -710,6 +710,8 @@ static bool vl53l1x_update_dss(const struct vl53l1x_results *r)
                            0x8000u);
 }
 
+static volatile uint16_t* disp = (uint16_t*)0x20;
+
 bool vl53l1x_init(void)
 {
     uint8_t tmp8;
@@ -722,162 +724,198 @@ bool vl53l1x_init(void)
     osc_calibrate_val = 0u;
 
     if (!vl53l1x_read16(REG_IDENTIFICATION__MODEL_ID, &tmp16)) {
+        *disp = 0x1000;
         return false;
     }
 
     if (tmp16 != 0xEACCu) {
+        *disp = 0x1001;
         return false;
     }
 
     if (!vl53l1x_write8(REG_SOFT_RESET, 0x00u)) {
+        *disp = 0x1002;
         return false;
     }
 
     VL53L1X_DELAY_US(100u);
 
     if (!vl53l1x_write8(REG_SOFT_RESET, 0x01u)) {
+        *disp = 0x1003;
         return false;
     }
 
     VL53L1X_DELAY_US(1000u);
 
     if (!vl53l1x_wait_boot()) {
+        *disp = 0x1004;
         return false;
     }
 
 #if VL53L1X_USE_2V8
     if (!vl53l1x_read8(REG_PAD_I2C_HV__EXTSUP_CONFIG, &tmp8)) {
+        *disp = 0x1005;
         return false;
     }
 
     if (!vl53l1x_write8(REG_PAD_I2C_HV__EXTSUP_CONFIG,
                         (uint8_t)(tmp8 | 0x01u))) {
+        *disp = 0x1006;
         return false;
     }
 #endif
 
     if (!vl53l1x_read16(REG_OSC_MEASURED__FAST_OSC__FREQUENCY,
                         &fast_osc_frequency)) {
+        *disp = 0x1007;
         return false;
     }
 
     if (!vl53l1x_read16(REG_RESULT__OSC_CALIBRATE_VAL,
                         &osc_calibrate_val)) {
+        *disp = 0x1008;
         return false;
     }
 
     if ((fast_osc_frequency == 0u) || (osc_calibrate_val == 0u)) {
+        *disp = 0x1009;
         return false;
     }
 
     if (!vl53l1x_write16(REG_DSS_CONFIG__TARGET_TOTAL_RATE_MCPS,
                          VL53L1X_TARGET_RATE)) {
+        *disp = 0x100A;
         return false;
     }
 
     if (!vl53l1x_write8(REG_GPIO__TIO_HV_STATUS, 0x02u)) {
+        *disp = 0x100B;
         return false;
     }
 
     if (!vl53l1x_write8(REG_SIGMA_ESTIMATOR__EFFECTIVE_PULSE_WIDTH_NS, 8u)) {
+        *disp = 0x100C;
         return false;
     }
 
     if (!vl53l1x_write8(REG_SIGMA_ESTIMATOR__EFFECTIVE_AMBIENT_WIDTH_NS, 16u)) {
+        *disp = 0x100D;
         return false;
     }
 
     if (!vl53l1x_write8(REG_ALGO__CROSSTALK_COMPENSATION_VALID_HEIGHT_MM,
                         0x01u)) {
+        *disp = 0x100E;
         return false;
     }
 
     if (!vl53l1x_write8(REG_ALGO__RANGE_IGNORE_VALID_HEIGHT_MM, 0xFFu)) {
+        *disp = 0x100F;
         return false;
     }
 
     if (!vl53l1x_write8(REG_ALGO__RANGE_MIN_CLIP, 0u)) {
+        *disp = 0x1010;
         return false;
     }
 
     if (!vl53l1x_write8(REG_ALGO__CONSISTENCY_CHECK__TOLERANCE, 2u)) {
+        *disp = 0x1011;
         return false;
     }
 
     if (!vl53l1x_write16(REG_SYSTEM__THRESH_RATE_HIGH, 0x0000u)) {
+        *disp = 0x1012;
         return false;
     }
 
     if (!vl53l1x_write16(REG_SYSTEM__THRESH_RATE_LOW, 0x0000u)) {
+        *disp = 0x1013;
         return false;
     }
 
     if (!vl53l1x_write8(REG_DSS_CONFIG__APERTURE_ATTENUATION, 0x38u)) {
+        *disp = 0x1014;
         return false;
     }
 
     if (!vl53l1x_write16(REG_RANGE_CONFIG__SIGMA_THRESH, 360u)) {
+        *disp = 0x1015;
         return false;
     }
 
     if (!vl53l1x_write16(REG_RANGE_CONFIG__MIN_COUNT_RATE_RTN_LIMIT_MCPS,
                          192u)) {
+        *disp = 0x1016;
         return false;
     }
 
     if (!vl53l1x_write8(REG_SYSTEM__GROUPED_PARAMETER_HOLD_0, 0x01u)) {
+        *disp = 0x1017;
         return false;
     }
 
     if (!vl53l1x_write8(REG_SYSTEM__GROUPED_PARAMETER_HOLD_1, 0x01u)) {
+        *disp = 0x1018;
         return false;
     }
 
     if (!vl53l1x_write8(REG_SD_CONFIG__QUANTIFIER, 2u)) {
+        *disp = 0x1019;
         return false;
     }
 
     if (!vl53l1x_write8(REG_SYSTEM__GROUPED_PARAMETER_HOLD, 0x00u)) {
+        *disp = 0x101A;
         return false;
     }
 
     if (!vl53l1x_write8(REG_SYSTEM__SEED_CONFIG, 1u)) {
+        *disp = 0x101B;
         return false;
     }
 
     if (!vl53l1x_write8(REG_SYSTEM__SEQUENCE_CONFIG, 0x8Bu)) {
+        *disp = 0x101C;
         return false;
     }
 
     if (!vl53l1x_write16(REG_DSS_CONFIG__MANUAL_EFFECTIVE_SPADS_SELECT,
                          (uint16_t)(200u << 8))) {
+        *disp = 0x101D;
         return false;
     }
 
     if (!vl53l1x_write8(REG_DSS_CONFIG__ROI_MODE_CONTROL, 2u)) {
+        *disp = 0x101E;
         return false;
     }
 
     if (!vl53l1x_set_long_distance_mode()) {
+        *disp = 0x101F;
         return false;
     }
 
     if (!vl53l1x_read16(REG_MM_CONFIG__OUTER_OFFSET_MM, &tmp16)) {
+        *disp = 0x1020;
         return false;
     }
 
     if (!vl53l1x_write16(REG_ALGO__PART_TO_PART_RANGE_OFFSET_MM,
                          (uint16_t)(tmp16 * 4u))) {
+        *disp = 0x1021;
         return false;
     }
 
     if (!vl53l1x_write32(
             REG_SYSTEM__INTERMEASUREMENT_PERIOD,
             (uint32_t)VL53L1X_INTERMEASUREMENT_MS * osc_calibrate_val)) {
+        *disp = 0x1022;
         return false;
     }
 
     if (!vl53l1x_write8(REG_SYSTEM__INTERRUPT_CLEAR, 0x01u)) {
+        *disp = 0x1023;
         return false;
     }
 
@@ -885,6 +923,7 @@ bool vl53l1x_init(void)
      * 0x40 = timed continuous ranging mode.
      */
     if (!vl53l1x_write8(REG_SYSTEM__MODE_START, 0x40u)) {
+        *disp = 0x1024;
         return false;
     }
 
