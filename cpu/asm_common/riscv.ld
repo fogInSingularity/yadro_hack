@@ -8,6 +8,8 @@ SECTIONS
 
     .text :
     {
-        *(.text)
+        loader.o(.text)
+        *(.text .text.*)
+        *(.text.startup .text.startup.*)
     }
 }

@@ -37,7 +37,7 @@ initial begin
     @(negedge clk);
     rst_n = 1'b1;
 
-    repeat (1000) @(posedge clk);
+    repeat (10000) @(posedge clk);
 
     $finish;
 end

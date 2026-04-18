@@ -1,5 +1,5 @@
 PROG_NAME ?= display
-IMEM_WORDS_CNT ?= 256
+IMEM_WORDS_CNT ?= 4096
 
 RISCV_PREFIX := riscv64-unknown-elf-
 
@@ -26,7 +26,7 @@ NO_GOT_FLAGS    := -fno-pic -fno-pie -msmall-data-limit=0
 
 CFLAGS  := $(COMMON_RV_FLAGS) $(BARE_FLAGS) $(NO_GOT_FLAGS) -Oz -flto
 LDFLAGS := $(COMMON_RV_FLAGS) $(BARE_FLAGS) $(NO_GOT_FLAGS) -Oz -flto
-LDSCRIPT := $(ASM_COMMON_DIR)/riscv.ld
+LDSCRIPT := $(abspath $(ASM_COMMON_DIR)/riscv.ld)
 
 # ---------------------------------
 
@@ -50,11 +50,11 @@ $(OUT_DIR)/%.o: $(PROGS_DIR)/%.c
 
 $(OUT_DIR)/$(PROG_NAME).out: $(OUT_DIR)/loader.o $(C_OBJS)
 	@mkdir -p $(OUT_DIR)
+	cd $(OUT_DIR) && \
 	$(CC) $(LDFLAGS) \
-		-Wl,-Map=$(OUT_DIR)/$(PROG_NAME).map \
+		-Wl,-Map=$(PROG_NAME).map \
 		-T $(LDSCRIPT) \
-		$(OUT_DIR)/loader.o $(C_OBJS) -o $@
-# 	$(OBJDUMP) -d --visualize-jumps -M no-aliases $@ | tee $(OUT_DIR)/$(PROG_NAME).dis
+		loader.o $(notdir $(C_OBJS)) -o $(PROG_NAME).out
 
 .PHONY: build_prog
 build_prog: $(OUT_DIR)/$(PROG_NAME).txt $(OUT_DIR)/$(PROG_NAME).mif

@@ -97,20 +97,20 @@ always @(*) begin
     i2c_din_wren            = 1'b0;
     i2c_arb_lost_clear_wren = 1'b0;        
 
-    casez ({i_mmio_addr, 2'b0, i_mmio_mask})
-        {32'h24, 4'b???1}: begin 
+    casez ({i_mmio_addr, 2'b0, i_mmio_mask, i_mmio_wren})
+        {32'h24, 4'b???1, 1'b1}: begin 
             i2c_i_cmd_valid    = i_mmio_data[0];
             i2c_cmd_valid_wren = 1'b1; 
         end
-        {32'h28, 4'b???1}: begin 
+        {32'h28, 4'b???1, 1'b1}: begin 
             i2c_i_cmd    = i_mmio_data[2:0];
             i2c_cmd_wren = 1'b1; 
         end
-        {32'h2C, 4'b???1}: begin 
+        {32'h2C, 4'b???1, 1'b1}: begin 
             i2c_i_din    = i_mmio_data[7:0];
             i2c_din_wren = 1'b1; 
         end
-        {32'h40, 4'b???1}: begin 
+        {32'h40, 4'b???1, 1'b1}: begin 
             i2c_i_arb_lost_clear    = i_mmio_data[0];
             i2c_arb_lost_clear_wren = 1'b1; 
         end
