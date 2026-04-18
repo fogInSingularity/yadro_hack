@@ -81,7 +81,7 @@ set_global_assignment -name TOP_LEVEL_ENTITY fpga_top
 # Fitter Assignments
 # ==================
 set_global_assignment -name RESERVE_ALL_UNUSED_PINS_WEAK_PULLUP "AS INPUT TRI-STATED"
-set_global_assignment -name DEVICE EP4CE6E22C8
+set_global_assignment -name DEVICE EP4CE15F23C8
 set_global_assignment -name ERROR_CHECK_FREQUENCY_DIVISOR 1
 
 # EDA Netlist Writer Assignments

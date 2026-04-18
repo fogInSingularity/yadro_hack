@@ -2,7 +2,7 @@ PROJECT_ROOT:=$(abspath .)
 export PROJECT_ROOT
 
 TASK_NAME?=08_cpu
-TB_NAME?=i2c_test_bench
+TB_NAME?=system_top_tb
 DEFINES_RAW?=
 RAND_SEED?=25
 
