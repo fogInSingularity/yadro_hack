@@ -11,15 +11,10 @@
  * before compiling this file.
  */
 #ifndef VL53L1X_DELAY_US
-static void vl53l1x_default_delay_us(uint32_t ms)
+static void vl53l1x_default_delay_us(uint32_t us)
 {
-    const volatile uint32_t loops_per_ms = 50000; // calibrate experimentally
-
-    for (uint32_t m = 0; m < ms; ++m) {
-        for (volatile uint32_t i = 0; i < loops_per_ms; ++i) {
-            __asm__ volatile ("" ::: "memory");
-        }
-    }
+    volatile uint32_t n = us * 8u;
+    while (n-- != 0u) { }
 }
 #define VL53L1X_DELAY_US(us) vl53l1x_default_delay_us((uint32_t)(us))
 #endif
@@ -30,7 +25,7 @@ static void vl53l1x_default_delay_us(uint32_t ms)
 
 #define VL53L1X_TARGET_RATE                 0x0A00u
 #define VL53L1X_TIMING_GUARD_US            4528u
-#define VL53L1X_RESULT_BUF_LEN               17u
+#define VL53L1X_RESULT_BUF_LEN             17u
 
 #define REG_SOFT_RESET                                      0x0000u
 #define REG_OSC_MEASURED__FAST_OSC__FREQUENCY              0x0006u
@@ -83,7 +78,7 @@ static void vl53l1x_default_delay_us(uint32_t ms)
 #define REG_FIRMWARE__SYSTEM_STATUS                         0x00E5u
 #define REG_IDENTIFICATION__MODEL_ID                        0x010Fu
 
-#define VL53L1X_RANGE_STATUS_COMPLETE                         9u
+#define VL53L1X_RANGE_STATUS_COMPLETE                       9u
 
 struct vl53l1x_results {
     uint8_t  range_status;
@@ -100,72 +95,113 @@ static bool calibrated;
 static uint8_t saved_vhv_init;
 static uint8_t saved_vhv_timeout;
 
+static bool vl53l1x_write_multi(uint16_t reg, const uint8_t *data, uint8_t len)
+{
+    if ((data == NULL) || (len == 0u)) {
+        return false;
+    }
 
-/* ------------------------------------------------------------------------- */
-/* Low-level register access via write_burst/read_burst                      */
-/* ------------------------------------------------------------------------- */
+    if (!i2c_start()) {
+        return false;
+    }
+
+    if (!i2c_write_byte((uint8_t)((VL53L1X_ADDR << 1) | 0u))) {
+        (void)i2c_stop();
+        return false;
+    }
+
+    if (!i2c_write_byte((uint8_t)(reg >> 8))) {
+        (void)i2c_stop();
+        return false;
+    }
+
+    if (!i2c_write_byte((uint8_t)reg)) {
+        (void)i2c_stop();
+        return false;
+    }
+
+    for (uint8_t i = 0; i < len; i++) {
+        if (!i2c_write_byte(data[i])) {
+            (void)i2c_stop();
+            return false;
+        }
+    }
+
+    return i2c_stop();
+}
+
+static bool vl53l1x_read_multi(uint16_t reg, uint8_t *data, uint8_t len)
+{
+    if ((data == NULL) || (len == 0u)) {
+        return false;
+    }
+
+    if (!i2c_start()) {
+        return false;
+    }
+
+    if (!i2c_write_byte((uint8_t)((VL53L1X_ADDR << 1) | 0u))) {
+        (void)i2c_stop();
+        return false;
+    }
+
+    if (!i2c_write_byte((uint8_t)(reg >> 8))) {
+        (void)i2c_stop();
+        return false;
+    }
+
+    if (!i2c_write_byte((uint8_t)reg)) {
+        (void)i2c_stop();
+        return false;
+    }
+
+    if (!i2c_restart()) {
+        (void)i2c_stop();
+        return false;
+    }
+
+    if (!i2c_write_byte((uint8_t)((VL53L1X_ADDR << 1) | 1u))) {
+        (void)i2c_stop();
+        return false;
+    }
+
+    for (uint8_t i = 0; i < len; i++) {
+        bool send_nack = (i == (uint8_t)(len - 1u));
+
+        if (!i2c_read_byte(&data[i], send_nack)) {
+            (void)i2c_stop();
+            return false;
+        }
+    }
+
+    return i2c_stop();
+}
 
 static bool vl53l1x_write8(uint16_t reg, uint8_t value)
 {
-    uint8_t buf[3];
-
-    buf[0] = (uint8_t)(reg >> 8);
-    buf[1] = (uint8_t)reg;
-    buf[2] = value;
-
-    return write_burst(VL53L1X_ADDR, buf, sizeof(buf));
+    return vl53l1x_write_multi(reg, &value, 1u);
 }
 
 static bool vl53l1x_write16(uint16_t reg, uint16_t value)
 {
-    uint8_t buf[4];
+    uint8_t data[2];
 
-    buf[0] = (uint8_t)(reg >> 8);
-    buf[1] = (uint8_t)reg;
-    buf[2] = (uint8_t)(value >> 8);
-    buf[3] = (uint8_t)value;
+    data[0] = (uint8_t)(value >> 8);
+    data[1] = (uint8_t)value;
 
-    return write_burst(VL53L1X_ADDR, buf, sizeof(buf));
+    return vl53l1x_write_multi(reg, data, 2u);
 }
 
 static bool vl53l1x_write32(uint16_t reg, uint32_t value)
 {
-    uint8_t buf[6];
+    uint8_t data[4];
 
-    buf[0] = (uint8_t)(reg >> 8);
-    buf[1] = (uint8_t)reg;
-    buf[2] = (uint8_t)(value >> 24);
-    buf[3] = (uint8_t)(value >> 16);
-    buf[4] = (uint8_t)(value >> 8);
-    buf[5] = (uint8_t)value;
+    data[0] = (uint8_t)(value >> 24);
+    data[1] = (uint8_t)(value >> 16);
+    data[2] = (uint8_t)(value >> 8);
+    data[3] = (uint8_t)value;
 
-    return write_burst(VL53L1X_ADDR, buf, sizeof(buf));
-}
-
-/*
- * Register reads are done as:
- *   1) write_burst(addr, reg_hi, reg_lo)
- *   2) read_burst(addr, data...)
- *
- * This is two I2C transactions, not a repeated-start combined transaction.
- * That matches the behavior of the original Arduino code.
- */
-static bool vl53l1x_read_multi(uint16_t reg, uint8_t *data, size_t len)
-{
-    uint8_t reg_buf[2];
-
-    if ((len > 0u) && (data == NULL)) {
-        return false;
-    }
-
-    reg_buf[0] = (uint8_t)(reg >> 8);
-    reg_buf[1] = (uint8_t)reg;
-
-    if (!write_burst(VL53L1X_ADDR, reg_buf, sizeof(reg_buf))) {
-        return false;
-    }
-
-    return read_burst(VL53L1X_ADDR, data, len);
+    return vl53l1x_write_multi(reg, data, 4u);
 }
 
 static bool vl53l1x_read8(uint16_t reg, uint8_t *value)
@@ -175,143 +211,30 @@ static bool vl53l1x_read8(uint16_t reg, uint8_t *value)
 
 static bool vl53l1x_read16(uint16_t reg, uint16_t *value)
 {
-    uint8_t buf[2];
+    uint8_t data[2];
 
     if (value == NULL) {
         return false;
     }
 
-    if (!vl53l1x_read_multi(reg, buf, sizeof(buf))) {
+    if (!vl53l1x_read_multi(reg, data, 2u)) {
         return false;
     }
 
-    *value = ((uint16_t)buf[0] << 8) | buf[1];
+    *value = ((uint16_t)data[0] << 8) | data[1];
+
     return true;
 }
-
-
-/* ------------------------------------------------------------------------- */
-/* Software arithmetic helpers for RV32I (no MUL/DIV instructions required)  */
-/* ------------------------------------------------------------------------- */
-
-static uint32_t vl53l1x_mul_u32_soft(uint32_t a, uint32_t b)
-{
-    uint32_t r = 0u;
-
-    while (b != 0u) {
-        if ((b & 1u) != 0u) {
-            r += a;
-        }
-
-        a <<= 1;
-        b >>= 1;
-    }
-
-    return r;
-}
-
-static uint32_t vl53l1x_divmod_u32_soft(uint32_t num,
-                                        uint32_t den,
-                                        uint32_t *rem_out)
-{
-    uint32_t q = 0u;
-    uint32_t bit = 1u;
-
-    if (den == 0u) {
-        if (rem_out != NULL) {
-            *rem_out = 0u;
-        }
-        return 0u;
-    }
-
-    while ((den < num) && ((den & 0x80000000u) == 0u)) {
-        den <<= 1;
-        bit <<= 1;
-    }
-
-    while (bit != 0u) {
-        if (num >= den) {
-            num -= den;
-            q |= bit;
-        }
-
-        den >>= 1;
-        bit >>= 1;
-    }
-
-    if (rem_out != NULL) {
-        *rem_out = num;
-    }
-
-    return q;
-}
-
-static uint32_t vl53l1x_div_shift12_round_u32(uint32_t num, uint32_t den)
-{
-    uint32_t q;
-    uint32_t rem;
-    uint32_t frac = 0u;
-    uint32_t half_floor;
-    uint32_t half_ceil;
-    uint8_t i;
-
-    if (den == 0u) {
-        return 0u;
-    }
-
-    q = vl53l1x_divmod_u32_soft(num, den, &rem);
-
-    if (q > 0x000FFFFFu) {
-        return 0xFFFFFFFFu;
-    }
-
-    q <<= 12;
-
-    half_floor = den >> 1;
-    half_ceil = half_floor + (den & 1u);
-
-    for (i = 0u; i < 12u; ++i) {
-        frac <<= 1;
-
-        if (rem >= half_ceil) {
-            frac |= 1u;
-
-            if ((den & 1u) == 0u) {
-                rem = (rem - half_floor) << 1;
-            } else {
-                rem = ((rem - half_ceil) << 1) | 1u;
-            }
-        } else {
-            rem <<= 1;
-        }
-    }
-
-    q += frac;
-
-    if (rem >= half_ceil) {
-        if (q != 0xFFFFFFFFu) {
-            q++;
-        }
-    }
-
-    return q;
-}
-
-static uint32_t vl53l1x_mul_u32_2011(uint32_t x)
-{
-    return (x << 10) + (x << 9) + (x << 8) + (x << 7) +
-           (x << 6) + (x << 4) + (x << 3) + (x << 1) + x;
-}
-
-
-/* ------------------------------------------------------------------------- */
-/* Timing helpers                                                            */
-/* ------------------------------------------------------------------------- */
 
 static uint32_t vl53l1x_timeout_us_to_mclks(uint32_t timeout_us,
                                             uint32_t macro_period_us)
 {
-    return vl53l1x_div_shift12_round_u32(timeout_us, macro_period_us);
+    if (macro_period_us == 0u) {
+        return 0u;
+    }
+
+    return (uint32_t)(((((uint64_t)timeout_us << 12) +
+                       (macro_period_us >> 1)) / macro_period_us));
 }
 
 static uint16_t vl53l1x_encode_timeout(uint32_t timeout_mclks)
@@ -343,16 +266,12 @@ static uint32_t vl53l1x_calc_macro_period(uint8_t vcsel_period)
         return 0u;
     }
 
-    pll_period_us = vl53l1x_divmod_u32_soft(((uint32_t)1u << 30),
-                                            fast_osc_frequency,
-                                            NULL);
-
+    pll_period_us = ((uint32_t)1u << 30) / fast_osc_frequency;
     vcsel_period_pclks = (uint8_t)((vcsel_period + 1u) << 1);
 
-    macro_period_us = (pll_period_us << 11) + (pll_period_us << 8);
+    macro_period_us = 2304u * pll_period_us;
     macro_period_us >>= 6;
-    macro_period_us = vl53l1x_mul_u32_soft(macro_period_us,
-                                           (uint32_t)vcsel_period_pclks);
+    macro_period_us *= vcsel_period_pclks;
     macro_period_us >>= 6;
 
     return macro_period_us;
@@ -375,13 +294,14 @@ static bool vl53l1x_set_measurement_timing_budget(uint32_t budget_us)
         return false;
     }
 
-    range_config_timeout_us >>= 1;
+    range_config_timeout_us /= 2u;
 
     if (!vl53l1x_read8(REG_RANGE_CONFIG__VCSEL_PERIOD_A, &vcsel_period)) {
         return false;
     }
 
     macro_period_us = vl53l1x_calc_macro_period(vcsel_period);
+
     if (macro_period_us == 0u) {
         return false;
     }
@@ -418,6 +338,7 @@ static bool vl53l1x_set_measurement_timing_budget(uint32_t budget_us)
     }
 
     macro_period_us = vl53l1x_calc_macro_period(vcsel_period);
+
     if (macro_period_us == 0u) {
         return false;
     }
@@ -473,16 +394,11 @@ static bool vl53l1x_set_long_distance_mode(void)
     return vl53l1x_set_measurement_timing_budget(VL53L1X_TIMING_BUDGET_US);
 }
 
-
-/* ------------------------------------------------------------------------- */
-/* Sensor helpers                                                            */
-/* ------------------------------------------------------------------------- */
-
 static bool vl53l1x_wait_boot(void)
 {
     uint8_t status = 0u;
 
-    for (uint32_t i = 0u; i < VL53L1X_BOOT_POLL_COUNT; ++i) {
+    for (uint32_t i = 0; i < VL53L1X_BOOT_POLL_COUNT; i++) {
         if (vl53l1x_read8(REG_FIRMWARE__SYSTEM_STATUS, &status) &&
             ((status & 0x01u) != 0u)) {
             return true;
@@ -506,7 +422,11 @@ static bool vl53l1x_data_ready(bool *ready)
         return false;
     }
 
+    /*
+     * Interrupt is active low with the configuration used here.
+     */
     *ready = ((gpio_status & 0x01u) == 0u);
+
     return true;
 }
 
@@ -518,7 +438,9 @@ static bool vl53l1x_read_results(struct vl53l1x_results *r)
         return false;
     }
 
-    if (!vl53l1x_read_multi(REG_RESULT__RANGE_STATUS, b, sizeof(b))) {
+    if (!vl53l1x_read_multi(REG_RESULT__RANGE_STATUS,
+                            b,
+                            VL53L1X_RESULT_BUF_LEN)) {
         return false;
     }
 
@@ -600,16 +522,13 @@ static bool vl53l1x_update_dss(const struct vl53l1x_results *r)
             total_rate_per_spad = 0xFFFFu;
         }
 
-        total_rate_per_spad =
-            vl53l1x_divmod_u32_soft(total_rate_per_spad << 16,
-                                    spad_count,
-                                    NULL);
+        total_rate_per_spad <<= 16;
+        total_rate_per_spad /= spad_count;
 
         if (total_rate_per_spad != 0u) {
             uint32_t required_spads =
-                vl53l1x_divmod_u32_soft(((uint32_t)VL53L1X_TARGET_RATE << 16),
-                                        total_rate_per_spad,
-                                        NULL);
+                ((uint32_t)VL53L1X_TARGET_RATE << 16) /
+                total_rate_per_spad;
 
             if (required_spads > 0xFFFFu) {
                 required_spads = 0xFFFFu;
@@ -625,12 +544,6 @@ static bool vl53l1x_update_dss(const struct vl53l1x_results *r)
                            0x8000u);
 }
 
-
-/* ------------------------------------------------------------------------- */
-/* Public API                                                                */
-/* ------------------------------------------------------------------------- */
-
-volatile uint16_t* disp = (uint16_t*)0x20;
 bool vl53l1x_init(void)
 {
     uint8_t tmp8;
@@ -643,67 +556,56 @@ bool vl53l1x_init(void)
     osc_calibrate_val = 0u;
 
     if (!vl53l1x_read16(REG_IDENTIFICATION__MODEL_ID, &tmp16)) {
-        *disp = 0x1111;
         return false;
     }
 
     if (tmp16 != 0xEACCu) {
-        *disp = 0x1112;
         return false;
     }
 
     if (!vl53l1x_write8(REG_SOFT_RESET, 0x00u)) {
-        *disp = 0x1113;
         return false;
     }
 
     VL53L1X_DELAY_US(100u);
 
     if (!vl53l1x_write8(REG_SOFT_RESET, 0x01u)) {
-        *disp = 0x1114;
         return false;
     }
 
     VL53L1X_DELAY_US(1000u);
 
     if (!vl53l1x_wait_boot()) {
-        *disp = 0x1115;
         return false;
     }
 
 #if VL53L1X_USE_2V8
     if (!vl53l1x_read8(REG_PAD_I2C_HV__EXTSUP_CONFIG, &tmp8)) {
-        *disp = 0x1116;
         return false;
     }
 
     if (!vl53l1x_write8(REG_PAD_I2C_HV__EXTSUP_CONFIG,
                         (uint8_t)(tmp8 | 0x01u))) {
-        *disp = 0x1117;
         return false;
     }
 #endif
 
     if (!vl53l1x_read16(REG_OSC_MEASURED__FAST_OSC__FREQUENCY,
                         &fast_osc_frequency)) {
-        *disp = 0x1118;
         return false;
     }
 
     if (!vl53l1x_read16(REG_RESULT__OSC_CALIBRATE_VAL,
                         &osc_calibrate_val)) {
-        *disp = 0x1119;
         return false;
     }
 
     if ((fast_osc_frequency == 0u) || (osc_calibrate_val == 0u)) {
-        *disp = 0x111a;
         return false;
     }
 
     if (!vl53l1x_write16(REG_DSS_CONFIG__TARGET_TOTAL_RATE_MCPS,
                          VL53L1X_TARGET_RATE)) {
-        *disp = 0x111b;
         return false;
     }
 
@@ -799,14 +701,13 @@ bool vl53l1x_init(void)
     }
 
     if (!vl53l1x_write16(REG_ALGO__PART_TO_PART_RANGE_OFFSET_MM,
-                         (uint16_t)((uint32_t)tmp16 << 2))) {
+                         (uint16_t)(tmp16 * 4u))) {
         return false;
     }
 
     if (!vl53l1x_write32(
             REG_SYSTEM__INTERMEASUREMENT_PERIOD,
-            vl53l1x_mul_u32_soft((uint32_t)VL53L1X_INTERMEASUREMENT_MS,
-                                 (uint32_t)osc_calibrate_val))) {
+            (uint32_t)VL53L1X_INTERMEASUREMENT_MS * osc_calibrate_val)) {
         return false;
     }
 
@@ -814,6 +715,9 @@ bool vl53l1x_init(void)
         return false;
     }
 
+    /*
+     * 0x40 = timed continuous ranging mode.
+     */
     if (!vl53l1x_write8(REG_SYSTEM__MODE_START, 0x40u)) {
         return false;
     }
@@ -855,10 +759,13 @@ vl53l1x_poll_result_t vl53l1x_poll(uint16_t *range_mm)
         return VL53L1X_POLL_ERROR;
     }
 
-    corrected_range = vl53l1x_mul_u32_2011(
-                          (uint32_t)r.final_crosstalk_corrected_range_mm_sd0)
-                      + 0x0400u;
-    corrected_range >>= 11;
+    /*
+     * Same correction gain used by the Pololu library:
+     * range * 2011 / 2048, rounded.
+     */
+    corrected_range =
+        ((uint32_t)r.final_crosstalk_corrected_range_mm_sd0 * 2011u +
+         0x0400u) / 0x0800u;
 
     if (corrected_range > 0xFFFFu) {
         corrected_range = 0xFFFFu;
@@ -874,5 +781,9 @@ vl53l1x_poll_result_t vl53l1x_poll(uint16_t *range_mm)
         return VL53L1X_POLL_OK;
     }
 
+    /*
+     * A sample was read and range_mm was updated, but the sensor status was
+     * not normal RangeComplete.
+     */
     return VL53L1X_POLL_INVALID;
 }
