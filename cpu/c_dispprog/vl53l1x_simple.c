@@ -11,10 +11,15 @@
  * before compiling this file.
  */
 #ifndef VL53L1X_DELAY_US
-static void vl53l1x_default_delay_us(uint32_t us)
+static void vl53l1x_default_delay_us(uint32_t ms)
 {
-    volatile uint32_t n = us << 3;
-    while (n-- != 0u) { }
+    const volatile uint32_t loops_per_ms = 50000; // calibrate experimentally
+
+    for (uint32_t m = 0; m < ms; ++m) {
+        for (volatile uint32_t i = 0; i < loops_per_ms; ++i) {
+            __asm__ volatile ("" ::: "memory");
+        }
+    }
 }
 #define VL53L1X_DELAY_US(us) vl53l1x_default_delay_us((uint32_t)(us))
 #endif
