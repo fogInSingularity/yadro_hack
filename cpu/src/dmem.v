@@ -1,18 +1,20 @@
+`include "config.vh"
+
 module dmem(
     input  wire clk,
 
-    input  wire         i_we,
-    input  wire   [3:0] i_mask,
-    input  wire   [7:0] i_addr,
-    input  wire  [31:0] i_data,
-    output wire  [31:0] o_data
+    input  wire                        i_we,
+    input  wire [3:0]                  i_mask,
+    input  wire [`DMEM_ADDR_WIDTH-1:0] i_addr,
+    input  wire [31:0]                 i_data,
+    output wire [31:0]                 o_data
 );
 
 `ifdef __ICARUS__
 /* verilator lint_off LATCH */
 
-reg  [31:0] mem [0:255];
-reg   [7:0] addr;
+reg  [31:0] mem [0:(2**`DMEM_ADDR_WIDTH)-1];
+reg   [`DMEM_ADDR_WIDTH-1:0] addr;
 reg   [3:0] mask;
 reg         we;
 reg [31:0] data;
@@ -42,7 +44,7 @@ assign o_data = mem[addr];
 /* verilator lint_on LATCH */
 `else
  
-ram1rw32x256 ram1rw32x256(
+ram1rw32x1024 ram(
     .address    (i_addr ),
     .byteena    (i_mask ),
     .clock      (clk    ),

@@ -50,7 +50,9 @@ set_global_assignment -name VERILOG_FILE fpga_top.v
 
 set_global_assignment -name QIP_FILE ip/pll.qip
 set_global_assignment -name QIP_FILE ip/imem1r32x256.qip
+set_global_assignment -name QIP_FILE ip/imem1r32x4096.qip
 set_global_assignment -name QIP_FILE ip/ram1rw32x256.qip
+set_global_assignment -name QIP_FILE ip/ram1rw32x1024.qip
 
 set_global_assignment -name NUM_PARALLEL_PROCESSORS ALL
 
@@ -79,6 +81,11 @@ set_location_assignment PIN_77 -to SCL
 set_location_assignment PIN_76 -to SDA
 
 set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to *
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to SCL
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to SDA
+
+set_instance_assignment -name WEAK_PULL_UP_RESISTOR ON -to SCL
+set_instance_assignment -name WEAK_PULL_UP_RESISTOR ON -to SDA
 
 # Classic Timing Assignments
 # ==========================
