@@ -1,4 +1,4 @@
-PROG_NAME ?= dispproggg
+PROG_NAME ?= prog
 IMEM_WORDS_CNT ?= 4096
 
 RISCV_PREFIX := riscv64-unknown-elf-
@@ -57,7 +57,7 @@ $(OUT_DIR)/$(PROG_NAME).out: $(OUT_DIR)/loader.o $(C_OBJS)
 		loader.o $(notdir $(C_OBJS)) -o $(PROG_NAME).out
 
 .PHONY: build_prog
-build_prog: $(OUT_DIR)/$(PROG_NAME).txt $(OUT_DIR)/$(PROG_NAME).mif
+build_prog: clean_out $(OUT_DIR)/$(PROG_NAME).txt $(OUT_DIR)/$(PROG_NAME).mif
 	@echo "Result hex file: " $(OUT_DIR)/$(PROG_NAME).txt $(OUT_DIR)/$(PROG_NAME).mif
 	@echo "Result disasm file: " $(OUT_DIR)/$(PROG_NAME).dis
 

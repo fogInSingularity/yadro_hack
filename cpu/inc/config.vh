@@ -5,7 +5,7 @@
 `ifdef __ICARUS__
 `define IMEM_FILE_TXT   "out_prog/display.txt"
 `else // Quartus
-`define IMEM_FILE_MIF   "../out_prog/dispproggg.mif"
+`define IMEM_FILE_MIF   "../out_prog/prog.mif"
 `endif
 
 // MUST BE COMPLIANT WITH ACTUAL VALUES IN imem.v & dmem.v
