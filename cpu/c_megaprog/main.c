@@ -27,7 +27,7 @@ static void sleep_ms(uint32_t ms)
 
 /* ---------- Tunable knobs ---------- */
 #define STRAIGHT_SPEED 127
-#define STRAFE_LEFT_SPEED 90
+#define STRAFE_LEFT_SPEED 110
 
 #define STRAIGHT_TRIGGER_MM    250u
 #define LEFT_OPEN_THRESHOLD_MM 400u
@@ -35,18 +35,28 @@ static void sleep_ms(uint32_t ms)
 #define CLOSE_DEBOUNCE_SAMPLES 2u
 #define OPEN_DEBOUNCE_SAMPLES  2u
 
-/* Set to 0u to remove debug pauses */
+/* First transition pause: STRAIGHT -> LEFT */
 #define DEBUG_TRANSITION_MS 400u
+
+/* Second transition pause: LEFT -> STRAIGHT */
+#define RETURN_TRANSITION_MS 200u
 
 /* Recovery timing for ToF4M sensor re-init */
 #define TOF4M_RECOVERY_DELAY_MS 10u
 #define TOF4M_RECOVERY_FAIL_CODE 0xFFF1u
 #define TOF4M_RECOVERY_ACTIVE_CODE 0xFFF3u
 
-static void sleep_transition(void)
+static void sleep_transition_first(void)
 {
 #if DEBUG_TRANSITION_MS > 0u
     sleep_ms(DEBUG_TRANSITION_MS);
+#endif
+}
+
+static void sleep_transition_second(void)
+{
+#if RETURN_TRANSITION_MS > 0u
+    sleep_ms(RETURN_TRANSITION_MS);
 #endif
 }
 
@@ -168,7 +178,7 @@ int main(void)
 
                         sensor_needed = false;
                         rover_high_stop(&high);
-                        sleep_transition();
+                        sleep_transition_first();
 
                         state = STATE_LEFT;
                         rover_high_go_left(&high);
@@ -198,7 +208,7 @@ int main(void)
                         open_count = 0u;
 
                         rover_high_stop(&high);
-                        sleep_transition();
+                        sleep_transition_second();
 
                         state = STATE_STRAIGHT_2;
                         rover_high_go_straight(&high);
