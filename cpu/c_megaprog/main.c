@@ -30,11 +30,11 @@ void sleep_ms(uint32_t ms)
 #define REARM_DEBOUNCE_SAMPLES 3
 
 /*
- * Turn duration in main-loop iterations.
+ * Turn duration in milliseconds.
  * Tune these on hardware until the rover makes the angle you want.
  */
-#define RIGHT_TURN_TICKS 18000
-#define LEFT_TURN_TICKS  18000
+#define RIGHT_TURN_MS 300u
+#define LEFT_TURN_MS  300u
 
 /* ---------- State machine ---------- */
 
@@ -59,7 +59,6 @@ int main(void)
     uint16_t distance_mm = 0;
     uint8_t hit_count = 0;
     uint8_t rearm_count = 0;
-    uint32_t turn_ticks = 0;
     robot_state_t state = STATE_FIND_FIRST_OPEN;
 
     rover_t rover;
@@ -108,10 +107,10 @@ int main(void)
     }
 
     while (1) {
+        sleep_ms(25);
         vl53l1x_poll_result_t r = vl53l1x_poll(&distance_mm);
+        sleep_ms(25);
         volatile robot_state_t current_state;
-
-        sleep_ms(15);
 
         if (r == VL53L1X_POLL_ERROR) {
             rover_high_stop(&high);
@@ -132,7 +131,6 @@ int main(void)
                     }
                     if (hit_count >= OPEN_DEBOUNCE_SAMPLES) {
                         state = STATE_TURN_RIGHT;
-                        turn_ticks = RIGHT_TURN_TICKS;
                         hit_count = 0;
                     }
                 } else {
@@ -147,14 +145,10 @@ int main(void)
         if (current_state == STATE_TURN_RIGHT) {
             rover_high_turn_right(&high);
             *disp = 0x9001;
-
-            if (turn_ticks > 0) {
-                --turn_ticks;
-                asm volatile("" : : "g"(turn_ticks) : "memory");
-            } else {
-                state = STATE_REARM_SECOND_OPEN;
-                rearm_count = 0;
-            }
+            sleep_ms(RIGHT_TURN_MS);
+            rover_high_go_straight(&high);
+            state = STATE_REARM_SECOND_OPEN;
+            rearm_count = 0;
             continue;
         }
 
@@ -193,7 +187,6 @@ int main(void)
                     }
                     if (hit_count >= OPEN_DEBOUNCE_SAMPLES) {
                         state = STATE_TURN_LEFT;
-                        turn_ticks = LEFT_TURN_TICKS;
                         hit_count = 0;
                     }
                 } else {
@@ -208,12 +201,9 @@ int main(void)
         if (current_state == STATE_TURN_LEFT) {
             rover_high_turn_left(&high);
             *disp = 0x9002;
-
-            if (turn_ticks > 0) {
-                --turn_ticks;
-            } else {
-                state = STATE_FINAL_STRAIGHT;
-            }
+            sleep_ms(LEFT_TURN_MS);
+            rover_high_go_straight(&high);
+            state = STATE_FINAL_STRAIGHT;
             continue;
         }
 
