@@ -20,8 +20,8 @@ static void sleep_ms(uint32_t ms)
 
 /* ---------- States ---------- */
 #define STATE_STRAIGHT 0u
-#define STATE_RIGHT    1u
-#define STATE_LEFT     2u
+#define STATE_LEFT     1u
+#define STATE_RIGHT    2u
 #define STATE_FINISH   3u
 
 /* ---------- Tunable knobs ---------- */
@@ -39,7 +39,7 @@ static void sleep_ms(uint32_t ms)
 /* Consider the path "open" while turning when distance rises above this */
 #define TURN_OPEN_THRESHOLD_MM 320u
 
-/* Small re-arm threshold to stop LEFT from finishing instantly */
+/* Small re-arm threshold to stop RIGHT from finishing instantly */
 #define TURN_ARM_THRESHOLD_MM 220u
 
 /* Debounce */
@@ -48,8 +48,8 @@ static void sleep_ms(uint32_t ms)
 #define ARM_DEBOUNCE_SAMPLES   2u
 
 /* Keep turning a bit after the opening is detected */
-#define RIGHT_SETTLE_MS 120u
 #define LEFT_SETTLE_MS  120u
+#define RIGHT_SETTLE_MS 120u
 
 static void fatal(uint16_t code)
 {
@@ -134,63 +134,18 @@ int main(void)
                     }
 
                     if (close_count >= CLOSE_DEBOUNCE_SAMPLES) {
-                        state = STATE_RIGHT;
+                        state = STATE_LEFT;
                         close_count = 0u;
                         open_count = 0u;
                         arm_count = 0u;
-                        turn_armed = 1u;   /* already saw something close */
-                        rover_high_turn_right(&high);
+                        turn_armed = 1u;
+                        rover_high_turn_left(&high);
                     }
                 } else {
                     close_count = 0u;
                 }
             } else {
                 *disp = 0xFFF2u;
-            }
-
-            continue;
-        }
-
-        if (state == STATE_RIGHT) {
-            rover_high_turn_right(&high);
-
-            if (r == VL53L1X_POLL_OK) {
-                *disp = distance_mm;
-
-                if (turn_armed == 0u) {
-                    if (distance_mm <= TURN_ARM_THRESHOLD_MM) {
-                        if (arm_count < 255u) {
-                            ++arm_count;
-                        }
-
-                        if (arm_count >= ARM_DEBOUNCE_SAMPLES) {
-                            turn_armed = 1u;
-                            arm_count = 0u;
-                            open_count = 0u;
-                        }
-                    } else {
-                        arm_count = 0u;
-                    }
-                } else {
-                    if (distance_mm >= TURN_OPEN_THRESHOLD_MM) {
-                        if (open_count < 255u) {
-                            ++open_count;
-                        }
-
-                        if (open_count >= OPEN_DEBOUNCE_SAMPLES) {
-                            sleep_ms(RIGHT_SETTLE_MS);
-                            state = STATE_LEFT;
-                            open_count = 0u;
-                            arm_count = 0u;
-                            turn_armed = 0u;
-                            rover_high_turn_left(&high);
-                        }
-                    } else {
-                        open_count = 0u;
-                    }
-                }
-            } else {
-                *disp = 0x9001u;
             }
 
             continue;
@@ -224,6 +179,51 @@ int main(void)
 
                         if (open_count >= OPEN_DEBOUNCE_SAMPLES) {
                             sleep_ms(LEFT_SETTLE_MS);
+                            state = STATE_RIGHT;
+                            open_count = 0u;
+                            arm_count = 0u;
+                            turn_armed = 0u;
+                            rover_high_turn_right(&high);
+                        }
+                    } else {
+                        open_count = 0u;
+                    }
+                }
+            } else {
+                *disp = 0x9002u;
+            }
+
+            continue;
+        }
+
+        if (state == STATE_RIGHT) {
+            rover_high_turn_right(&high);
+
+            if (r == VL53L1X_POLL_OK) {
+                *disp = distance_mm;
+
+                if (turn_armed == 0u) {
+                    if (distance_mm <= TURN_ARM_THRESHOLD_MM) {
+                        if (arm_count < 255u) {
+                            ++arm_count;
+                        }
+
+                        if (arm_count >= ARM_DEBOUNCE_SAMPLES) {
+                            turn_armed = 1u;
+                            arm_count = 0u;
+                            open_count = 0u;
+                        }
+                    } else {
+                        arm_count = 0u;
+                    }
+                } else {
+                    if (distance_mm >= TURN_OPEN_THRESHOLD_MM) {
+                        if (open_count < 255u) {
+                            ++open_count;
+                        }
+
+                        if (open_count >= OPEN_DEBOUNCE_SAMPLES) {
+                            sleep_ms(RIGHT_SETTLE_MS);
                             state = STATE_FINISH;
                             open_count = 0u;
                             arm_count = 0u;
@@ -235,7 +235,7 @@ int main(void)
                     }
                 }
             } else {
-                *disp = 0x9002u;
+                *disp = 0x9001u;
             }
 
             continue;
