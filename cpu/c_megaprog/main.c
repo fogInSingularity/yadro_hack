@@ -5,7 +5,7 @@
 
 #include "vl53l1x_simple.h"
 
-#define disp ((uint16_t*)0x20)
+#define disp ((volatile uint16_t*)0x20)
 
 #define LOOPS_PER_MS 50000u
 void sleep_ms(uint32_t ms)
