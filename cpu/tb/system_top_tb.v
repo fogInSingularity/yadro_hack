@@ -8,11 +8,8 @@ reg rst_n;
 wire SDA, SCL;
 wire [3:0] DIGS;
 wire [7:0] SEGS;
-wire BTN1, BTN2;
+reg BTN1, BTN2;
 
-assign BTN1 = 0;
-assign BTN2 = 0;
- 
 initial begin
     clk = 1'b0;
     forever #1 clk = ~clk;
@@ -37,11 +34,24 @@ initial begin
 
     $dumpvars;
 
+    BTN1 = 0;
+    BTN2 = 0;
+
     @(negedge clk);
     rst_n = 1'b0;
 
     @(negedge clk);
     rst_n = 1'b1;
+
+    repeat (100) @(posedge clk);
+
+    BTN1 = 1;
+    BTN2 = 1;
+
+    repeat (100) @(posedge clk);
+
+    BTN1 = 0;
+    BTN2 = 0;
 
     repeat (10000) @(posedge clk);
 

@@ -3,7 +3,7 @@
 
 // SYSTEM CONFIG
 `ifdef __ICARUS__
-`define IMEM_FILE_TXT   "out_prog/display.txt"
+`define IMEM_FILE_TXT   "out_prog/prog.txt"
 `else // Quartus
 `define IMEM_FILE_MIF   "../out_prog/prog.mif"
 `endif
