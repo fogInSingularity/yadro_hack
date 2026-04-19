@@ -150,6 +150,7 @@ int main(void)
 
             if (turn_ticks > 0) {
                 --turn_ticks;
+                asm volatile("" : : "g"(turn_ticks) : "memory");
             } else {
                 state = STATE_REARM_SECOND_OPEN;
                 rearm_count = 0;
