@@ -164,25 +164,36 @@ VL53L1X_KEEP_SYMBOL uint64_t __udivdi3(uint64_t numerator, uint64_t denominator)
     return vl53l1x_soft_udiv_u64(numerator, denominator);
 }
 
-/*
- * Replace this with a real delay if you have one:
- *
- *   #define VL53L1X_DELAY_US(us) delay_us(us)
- *
- * before compiling this file.
- */
 #ifndef VL53L1X_DELAY_US
-static void vl53l1x_default_delay_us(uint32_t us)
+static inline void vl53l1x_delay_us(uint32_t us)
 {
-    const volatile uint32_t loops_per_ms = 150000;
+    /*
+     * 50 MHz core => 50 cycles per microsecond.
+     *
+     * This loop is written in inline asm so the compiler does not
+     * optimize it away or change the instruction mix too much.
+     *
+     * Loop body is typically:
+     *   addi  count, count, -1
+     *   bnez  count, loop
+     *
+     * On a simple 1-CPI core, that is about 2 cycles per iteration
+     * if branches are not penalized heavily.
+     *
+     * So iterations per microsecond ~= 50 / 2 = 25.
+     */
+    uint32_t count = us * 25u;
 
-    for (uint32_t m = 0; m < us; ++m) {
-        for (volatile uint32_t i = 0; i < loops_per_ms; ++i) {
-            __asm__ volatile ("" ::: "memory");
-        }
-    }
+    __asm__ volatile (
+        "1:\n"
+        "addi %[cnt], %[cnt], -1\n"
+        "bnez %[cnt], 1b\n"
+        : [cnt] "+r" (count)
+        :
+        : "memory"
+    );
 }
-#define VL53L1X_DELAY_US(us) vl53l1x_default_delay_us((uint32_t)(us))
+#define VL53L1X_DELAY_US(us) vl53l1x_delay_us((uint32_t)(us))
 #endif
 
 #ifndef VL53L1X_BOOT_POLL_COUNT
@@ -560,20 +571,85 @@ static bool vl53l1x_set_long_distance_mode(void)
     return vl53l1x_set_measurement_timing_budget(VL53L1X_TIMING_BUDGET_US);
 }
 
+#include <stdbool.h>
+#include <stdint.h>
+
+/* add these if not already present */
+#define REG_SOFT_RESET                                      0x0000u
+#define REG_VHV_CONFIG__TIMEOUT_MACROP_LOOP_BOUND           0x0008u
+#define REG_VHV_CONFIG__INIT                                0x000Bu
+#define REG_PAD_I2C_HV__EXTSUP_CONFIG                       0x002Eu
+#define REG_GPIO_HV_MUX__CTRL                               0x0030u
+#define REG_GPIO__TIO_HV_STATUS                             0x0031u
+#define REG_SYSTEM__INTERRUPT_CLEAR                         0x0086u
+#define REG_SYSTEM__MODE_START                              0x0087u
+#define REG_RESULT__RANGE_STATUS                            0x0089u
+#define REG_RESULT__FINAL_CROSSTALK_CORRECTED_RANGE_MM_SD0  0x0096u
+#define REG_FIRMWARE__SYSTEM_STATUS                         0x00E5u
+#define REG_IDENTIFICATION__MODEL_ID                        0x010Fu
+
+#ifndef VL53L1X_BOOT_POLL_COUNT
+#define VL53L1X_BOOT_POLL_COUNT 10000u
+#endif
+
+#ifndef VL53L1X_DATAREADY_POLL_COUNT
+#define VL53L1X_DATAREADY_POLL_COUNT 20000u
+#endif
+
+#define VL53L1X_RAW_RANGE_STATUS_GOOD 0x09u
+
+static uint8_t vl53l1x_irq_ready_level = 1u;
+static bool vl53l1x_discard_next_range = false;
+
+/*
+ * ST/ULD default configuration block, 0x002D..0x0087 inclusive.
+ * This matches the working HDL flow and ST's ULD-style implementations.
+ */
+static const uint8_t vl53l1x_default_cfg[] = {
+    0x00, 0x00, 0x00, 0x01, 0x02, 0x00, 0x02, 0x08,
+    0x00, 0x08, 0x10, 0x01, 0x01, 0x00, 0x00, 0x00,
+    0x00, 0xFF, 0x00, 0x0F, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x20, 0x0B, 0x00, 0x00, 0x02, 0x0A, 0x21,
+    0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x00, 0xC8,
+    0x00, 0x00, 0x38, 0xFF, 0x01, 0x00, 0x08, 0x00,
+    0x00, 0x01, 0xCC, 0x0F, 0x01, 0xF1, 0x0D, 0x01,
+    0x68, 0x00, 0x80, 0x08, 0xB8, 0x00, 0x00, 0x00,
+    0x00, 0x0F, 0x89, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x01, 0x0F, 0x0D, 0x0E, 0x0E, 0x00,
+    0x00, 0x02, 0xC7, 0xFF, 0x9B, 0x00, 0x00, 0x00,
+    0x01, 0x00, 0x00
+};
+
 static bool vl53l1x_wait_boot(void)
 {
     uint8_t status = 0u;
 
-    for (uint32_t i = 0; i < VL53L1X_BOOT_POLL_COUNT; i++) {
+    for (uint32_t i = 0; i < VL53L1X_BOOT_POLL_COUNT; ++i) {
         if (vl53l1x_read8(REG_FIRMWARE__SYSTEM_STATUS, &status) &&
             ((status & 0x01u) != 0u)) {
             return true;
         }
-
         VL53L1X_DELAY_US(100u);
     }
 
     return false;
+}
+
+static bool vl53l1x_get_interrupt_ready_level(uint8_t *level)
+{
+    uint8_t mux;
+
+    if (level == NULL) {
+        return false;
+    }
+
+    if (!vl53l1x_read8(REG_GPIO_HV_MUX__CTRL, &mux)) {
+        return false;
+    }
+
+    /* ST logic: IntPol = !((GPIO_HV_MUX__CTRL & 0x10) >> 4) */
+    *level = (uint8_t)(!((mux >> 4) & 0x01u));
+    return true;
 }
 
 static bool vl53l1x_data_ready(bool *ready)
@@ -588,353 +664,133 @@ static bool vl53l1x_data_ready(bool *ready)
         return false;
     }
 
-    /*
-     * Interrupt is active low with the configuration used here.
-     */
-    *ready = ((gpio_status & 0x01u) == 0u);
-
+    *ready = ((gpio_status & 0x01u) == vl53l1x_irq_ready_level);
     return true;
 }
 
-static bool vl53l1x_read_results(struct vl53l1x_results *r)
+static bool vl53l1x_wait_data_ready(uint32_t max_polls)
 {
-    uint8_t b[VL53L1X_RESULT_BUF_LEN];
+    bool ready = false;
 
-    if (r == NULL) {
-        return false;
-    }
-
-    if (!vl53l1x_read_multi(REG_RESULT__RANGE_STATUS,
-                            b,
-                            VL53L1X_RESULT_BUF_LEN)) {
-        return false;
-    }
-
-    r->range_status = b[0];
-    r->stream_count = b[2];
-
-    r->dss_actual_effective_spads_sd0 =
-        ((uint16_t)b[3] << 8) | b[4];
-
-    r->ambient_count_rate_mcps_sd0 =
-        ((uint16_t)b[7] << 8) | b[8];
-
-    r->final_crosstalk_corrected_range_mm_sd0 =
-        ((uint16_t)b[13] << 8) | b[14];
-
-    r->peak_signal_count_rate_crosstalk_corrected_mcps_sd0 =
-        ((uint16_t)b[15] << 8) | b[16];
-
-    return true;
-}
-
-static bool vl53l1x_setup_manual_calibration(void)
-{
-    uint8_t phasecal_vcsel_start;
-
-    if (!vl53l1x_read8(REG_VHV_CONFIG__INIT, &saved_vhv_init)) {
-        return false;
-    }
-
-    if (!vl53l1x_read8(REG_VHV_CONFIG__TIMEOUT_MACROP_LOOP_BOUND,
-                       &saved_vhv_timeout)) {
-        return false;
-    }
-
-    if (!vl53l1x_write8(REG_VHV_CONFIG__INIT,
-                        (uint8_t)(saved_vhv_init & 0x7Fu))) {
-        return false;
-    }
-
-    if (!vl53l1x_write8(
-            REG_VHV_CONFIG__TIMEOUT_MACROP_LOOP_BOUND,
-            (uint8_t)((saved_vhv_timeout & 0x03u) + (3u << 2)))) {
-        return false;
-    }
-
-    if (!vl53l1x_write8(REG_PHASECAL_CONFIG__OVERRIDE, 0x01u)) {
-        return false;
-    }
-
-    if (!vl53l1x_read8(REG_PHASECAL_RESULT__VCSEL_START,
-                       &phasecal_vcsel_start)) {
-        return false;
-    }
-
-    if (!vl53l1x_write8(REG_CAL_CONFIG__VCSEL_START,
-                        phasecal_vcsel_start)) {
-        return false;
-    }
-
-    return true;
-}
-
-static bool vl53l1x_update_dss(const struct vl53l1x_results *r)
-{
-    uint16_t spad_count;
-
-    if (r == NULL) {
-        return false;
-    }
-
-    spad_count = r->dss_actual_effective_spads_sd0;
-
-    if (spad_count != 0u) {
-        uint32_t total_rate_per_spad =
-            (uint32_t)r->peak_signal_count_rate_crosstalk_corrected_mcps_sd0 +
-            r->ambient_count_rate_mcps_sd0;
-
-        if (total_rate_per_spad > 0xFFFFu) {
-            total_rate_per_spad = 0xFFFFu;
+    while (max_polls-- != 0u) {
+        if (!vl53l1x_data_ready(&ready)) {
+            return false;
         }
-
-        total_rate_per_spad <<= 16;
-        total_rate_per_spad /= spad_count;
-
-        if (total_rate_per_spad != 0u) {
-            uint32_t required_spads =
-                ((uint32_t)VL53L1X_TARGET_RATE << 16) /
-                total_rate_per_spad;
-
-            if (required_spads > 0xFFFFu) {
-                required_spads = 0xFFFFu;
-            }
-
-            return vl53l1x_write16(
-                REG_DSS_CONFIG__MANUAL_EFFECTIVE_SPADS_SELECT,
-                (uint16_t)required_spads);
+        if (ready) {
+            return true;
         }
     }
 
-    return vl53l1x_write16(REG_DSS_CONFIG__MANUAL_EFFECTIVE_SPADS_SELECT,
-                           0x8000u);
+    return false;
 }
 
 static volatile uint16_t* disp = (uint16_t*)0x20;
-
 bool vl53l1x_init(void)
 {
-    uint8_t tmp8;
-    uint16_t tmp16;
+    uint16_t model_id;
 
-    calibrated = false;
-    saved_vhv_init = 0u;
-    saved_vhv_timeout = 0u;
-    fast_osc_frequency = 0u;
-    osc_calibrate_val = 0u;
+    vl53l1x_irq_ready_level = 1u;
+    vl53l1x_discard_next_range = false;
 
-    if (!vl53l1x_read16(REG_IDENTIFICATION__MODEL_ID, &tmp16)) {
-        *disp = 0x1000;
+    if (!vl53l1x_read16(REG_IDENTIFICATION__MODEL_ID, &model_id)) {
+        *disp = 0x1100;
         return false;
     }
 
-    if (tmp16 != 0xEACCu) {
-        *disp = 0x1001;
+    /* Your HDL accepts both. Keep only 0xEACC if you want to be stricter. */
+    if ((model_id != 0xEACCu) && (model_id != 0xEBAAu)) {
+        *disp = 0x1101;
         return false;
     }
 
+    /* Optional but generally helpful */
     if (!vl53l1x_write8(REG_SOFT_RESET, 0x00u)) {
-        *disp = 0x1002;
+        *disp = 0x1102;
         return false;
     }
-
     VL53L1X_DELAY_US(100u);
 
     if (!vl53l1x_write8(REG_SOFT_RESET, 0x01u)) {
-        *disp = 0x1003;
+        *disp = 0x1103;
         return false;
     }
-
     VL53L1X_DELAY_US(1000u);
 
     if (!vl53l1x_wait_boot()) {
-        *disp = 0x1004;
+        *disp = 0x1104;
         return false;
     }
 
-#if VL53L1X_USE_2V8
-    if (!vl53l1x_read8(REG_PAD_I2C_HV__EXTSUP_CONFIG, &tmp8)) {
-        *disp = 0x1005;
+    if (!vl53l1x_write_multi(0x002Du,
+                             vl53l1x_default_cfg,
+                             (uint8_t)sizeof(vl53l1x_default_cfg))) {
+        *disp = 0x1105;
         return false;
     }
 
-    if (!vl53l1x_write8(REG_PAD_I2C_HV__EXTSUP_CONFIG,
-                        (uint8_t)(tmp8 | 0x01u))) {
-        *disp = 0x1006;
+#if defined(VL53L1X_USE_2V8) && VL53L1X_USE_2V8
+    if (!vl53l1x_write8(REG_PAD_I2C_HV__EXTSUP_CONFIG, 0x01u)) {
+        *disp = 0x1106;
         return false;
     }
 #endif
 
-    if (!vl53l1x_read16(REG_OSC_MEASURED__FAST_OSC__FREQUENCY,
-                        &fast_osc_frequency)) {
-        *disp = 0x1007;
+    if (!vl53l1x_get_interrupt_ready_level(&vl53l1x_irq_ready_level)) {
+        *disp = 0x1107;
         return false;
     }
 
-    if (!vl53l1x_read16(REG_RESULT__OSC_CALIBRATE_VAL,
-                        &osc_calibrate_val)) {
-        *disp = 0x1008;
+    /* SensorInit(): start once, wait ready, clear, stop */
+    if (!vl53l1x_write8(REG_SYSTEM__MODE_START, 0x40u)) {
+        *disp = 0x1108;
         return false;
     }
 
-    if ((fast_osc_frequency == 0u) || (osc_calibrate_val == 0u)) {
-        *disp = 0x1009;
-        return false;
-    }
-
-    if (!vl53l1x_write16(REG_DSS_CONFIG__TARGET_TOTAL_RATE_MCPS,
-                         VL53L1X_TARGET_RATE)) {
-        *disp = 0x100A;
-        return false;
-    }
-
-    if (!vl53l1x_write8(REG_GPIO__TIO_HV_STATUS, 0x02u)) {
-        *disp = 0x100B;
-        return false;
-    }
-
-    if (!vl53l1x_write8(REG_SIGMA_ESTIMATOR__EFFECTIVE_PULSE_WIDTH_NS, 8u)) {
-        *disp = 0x100C;
-        return false;
-    }
-
-    if (!vl53l1x_write8(REG_SIGMA_ESTIMATOR__EFFECTIVE_AMBIENT_WIDTH_NS, 16u)) {
-        *disp = 0x100D;
-        return false;
-    }
-
-    if (!vl53l1x_write8(REG_ALGO__CROSSTALK_COMPENSATION_VALID_HEIGHT_MM,
-                        0x01u)) {
-        *disp = 0x100E;
-        return false;
-    }
-
-    if (!vl53l1x_write8(REG_ALGO__RANGE_IGNORE_VALID_HEIGHT_MM, 0xFFu)) {
-        *disp = 0x100F;
-        return false;
-    }
-
-    if (!vl53l1x_write8(REG_ALGO__RANGE_MIN_CLIP, 0u)) {
-        *disp = 0x1010;
-        return false;
-    }
-
-    if (!vl53l1x_write8(REG_ALGO__CONSISTENCY_CHECK__TOLERANCE, 2u)) {
-        *disp = 0x1011;
-        return false;
-    }
-
-    if (!vl53l1x_write16(REG_SYSTEM__THRESH_RATE_HIGH, 0x0000u)) {
-        *disp = 0x1012;
-        return false;
-    }
-
-    if (!vl53l1x_write16(REG_SYSTEM__THRESH_RATE_LOW, 0x0000u)) {
-        *disp = 0x1013;
-        return false;
-    }
-
-    if (!vl53l1x_write8(REG_DSS_CONFIG__APERTURE_ATTENUATION, 0x38u)) {
-        *disp = 0x1014;
-        return false;
-    }
-
-    if (!vl53l1x_write16(REG_RANGE_CONFIG__SIGMA_THRESH, 360u)) {
-        *disp = 0x1015;
-        return false;
-    }
-
-    if (!vl53l1x_write16(REG_RANGE_CONFIG__MIN_COUNT_RATE_RTN_LIMIT_MCPS,
-                         192u)) {
-        *disp = 0x1016;
-        return false;
-    }
-
-    if (!vl53l1x_write8(REG_SYSTEM__GROUPED_PARAMETER_HOLD_0, 0x01u)) {
-        *disp = 0x1017;
-        return false;
-    }
-
-    if (!vl53l1x_write8(REG_SYSTEM__GROUPED_PARAMETER_HOLD_1, 0x01u)) {
-        *disp = 0x1018;
-        return false;
-    }
-
-    if (!vl53l1x_write8(REG_SD_CONFIG__QUANTIFIER, 2u)) {
-        *disp = 0x1019;
-        return false;
-    }
-
-    if (!vl53l1x_write8(REG_SYSTEM__GROUPED_PARAMETER_HOLD, 0x00u)) {
-        *disp = 0x101A;
-        return false;
-    }
-
-    if (!vl53l1x_write8(REG_SYSTEM__SEED_CONFIG, 1u)) {
-        *disp = 0x101B;
-        return false;
-    }
-
-    if (!vl53l1x_write8(REG_SYSTEM__SEQUENCE_CONFIG, 0x8Bu)) {
-        *disp = 0x101C;
-        return false;
-    }
-
-    if (!vl53l1x_write16(REG_DSS_CONFIG__MANUAL_EFFECTIVE_SPADS_SELECT,
-                         (uint16_t)(200u << 8))) {
-        *disp = 0x101D;
-        return false;
-    }
-
-    if (!vl53l1x_write8(REG_DSS_CONFIG__ROI_MODE_CONTROL, 2u)) {
-        *disp = 0x101E;
-        return false;
-    }
-
-    if (!vl53l1x_set_long_distance_mode()) {
-        *disp = 0x101F;
-        return false;
-    }
-
-    if (!vl53l1x_read16(REG_MM_CONFIG__OUTER_OFFSET_MM, &tmp16)) {
-        *disp = 0x1020;
-        return false;
-    }
-
-    if (!vl53l1x_write16(REG_ALGO__PART_TO_PART_RANGE_OFFSET_MM,
-                         (uint16_t)(tmp16 * 4u))) {
-        *disp = 0x1021;
-        return false;
-    }
-
-    if (!vl53l1x_write32(
-            REG_SYSTEM__INTERMEASUREMENT_PERIOD,
-            (uint32_t)VL53L1X_INTERMEASUREMENT_MS * osc_calibrate_val)) {
-        *disp = 0x1022;
+    if (!vl53l1x_wait_data_ready(VL53L1X_DATAREADY_POLL_COUNT)) {
+        *disp = 0x1109;
         return false;
     }
 
     if (!vl53l1x_write8(REG_SYSTEM__INTERRUPT_CLEAR, 0x01u)) {
-        *disp = 0x1023;
+        *disp = 0x110A;
+        return false;
+    }
+
+    if (!vl53l1x_write8(REG_SYSTEM__MODE_START, 0x00u)) {
+        *disp = 0x110B;
+        return false;
+    }
+
+    /* ST ULD post-init tweaks */
+    if (!vl53l1x_write8(REG_VHV_CONFIG__TIMEOUT_MACROP_LOOP_BOUND, 0x09u)) {
+        *disp = 0x110C;
+        return false;
+    }
+
+    if (!vl53l1x_write8(REG_VHV_CONFIG__INIT, 0x00u)) {
+        *disp = 0x110D;
+        return false;
+    }
+
+    /* Final continuous start */
+    if (!vl53l1x_write8(REG_SYSTEM__MODE_START, 0x40u)) {
+        *disp = 0x110E;
         return false;
     }
 
     /*
-     * 0x40 = timed continuous ranging mode.
+     * First sample after (re)start is often discarded in simple host drivers.
+     * Remove this if you truly do not care.
      */
-    if (!vl53l1x_write8(REG_SYSTEM__MODE_START, 0x40u)) {
-        *disp = 0x1024;
-        return false;
-    }
-
+    vl53l1x_discard_next_range = true;
     return true;
 }
 
 vl53l1x_poll_result_t vl53l1x_poll(uint16_t *range_mm)
 {
     bool ready;
-    struct vl53l1x_results r;
-    uint32_t corrected_range;
+    uint8_t raw_status;
+    uint16_t range;
 
     if (range_mm == NULL) {
         return VL53L1X_POLL_ERROR;
@@ -948,47 +804,29 @@ vl53l1x_poll_result_t vl53l1x_poll(uint16_t *range_mm)
         return VL53L1X_POLL_NONE;
     }
 
-    if (!vl53l1x_read_results(&r)) {
+    if (!vl53l1x_read8(REG_RESULT__RANGE_STATUS, &raw_status)) {
         return VL53L1X_POLL_ERROR;
     }
 
-    if (!calibrated) {
-        if (!vl53l1x_setup_manual_calibration()) {
-            return VL53L1X_POLL_ERROR;
-        }
-
-        calibrated = true;
-    }
-
-    if (!vl53l1x_update_dss(&r)) {
+    if (!vl53l1x_read16(REG_RESULT__FINAL_CROSSTALK_CORRECTED_RANGE_MM_SD0,
+                        &range)) {
         return VL53L1X_POLL_ERROR;
     }
-
-    /*
-     * Same correction gain used by the Pololu library:
-     * range * 2011 / 2048, rounded.
-     */
-    corrected_range =
-        ((uint32_t)r.final_crosstalk_corrected_range_mm_sd0 * 2011u +
-         0x0400u) / 0x0800u;
-
-    if (corrected_range > 0xFFFFu) {
-        corrected_range = 0xFFFFu;
-    }
-
-    *range_mm = (uint16_t)corrected_range;
 
     if (!vl53l1x_write8(REG_SYSTEM__INTERRUPT_CLEAR, 0x01u)) {
         return VL53L1X_POLL_ERROR;
     }
 
-    if (r.range_status == VL53L1X_RANGE_STATUS_COMPLETE) {
+    if (vl53l1x_discard_next_range) {
+        vl53l1x_discard_next_range = false;
+        return VL53L1X_POLL_NONE;
+    }
+
+    *range_mm = range;
+
+    if (raw_status == VL53L1X_RAW_RANGE_STATUS_GOOD) {
         return VL53L1X_POLL_OK;
     }
 
-    /*
-     * A sample was read and range_mm was updated, but the sensor status was
-     * not normal RangeComplete.
-     */
     return VL53L1X_POLL_INVALID;
 }
