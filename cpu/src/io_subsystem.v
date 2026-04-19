@@ -30,14 +30,14 @@ reg [31:0] mmio_data; // not a reg actually
 assign o_mmio_data = mmio_data_q;
 
 always @(*) begin
-    case ({i_mmio_addr, 2'b0, i_mmio_mask})
-        {32'h30, 4'b0001}: mmio_data = {24'b0, i2c_o_dout};
-        {32'h34, 4'b0001}: mmio_data = {31'b0, i2c_o_rx_ack};
-        {32'h38, 4'b0001}: mmio_data = {31'b0, i2c_o_ready};
-        {32'h3C, 4'b0001}: mmio_data = {31'b0, i2c_o_arb_lost};
-        {32'h44, 4'b0001}: mmio_data = {31'b0, i2c_o_busy};
-        {32'h00, 4'b0001}: mmio_data = {31'b0, btn1_r};
-        {32'h04, 4'b0001}: mmio_data = {31'b0, btn2_r};
+    casez ({i_mmio_addr, 2'b0, i_mmio_mask})
+        {32'h30, 4'b???1}: mmio_data = {24'b0, i2c_o_dout};
+        {32'h34, 4'b???1}: mmio_data = {31'b0, i2c_o_rx_ack};
+        {32'h38, 4'b???1}: mmio_data = {31'b0, i2c_o_ready};
+        {32'h3C, 4'b???1}: mmio_data = {31'b0, i2c_o_arb_lost};
+        {32'h44, 4'b???1}: mmio_data = {31'b0, i2c_o_busy};
+        {32'h04, 4'b???1}: mmio_data = {31'b0, btn1_r};
+        {32'h08, 4'b???1}: mmio_data = {31'b0, btn2_r};
         default:           mmio_data = 32'bx;
     endcase
 end
