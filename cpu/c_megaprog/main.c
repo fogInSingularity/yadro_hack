@@ -32,16 +32,16 @@ static void sleep_ms(uint32_t ms)
 
 /* Curved turns: outer side fast, inner side slower */
 #define TURN_OUTER_SPEED 127
-#define TURN_INNER_SPEED 55
+#define TURN_INNER_SPEED -127
 
 /* Start the first turn when something is close in front */
-#define STRAIGHT_TRIGGER_MM 180u
+#define STRAIGHT_TRIGGER_MM 80u
 
 /* Consider the path "open" while turning when distance rises above this */
-#define TURN_OPEN_THRESHOLD_MM 320u
+#define TURN_OPEN_THRESHOLD_MM 160u
 
 /* Small re-arm threshold to stop RIGHT from finishing instantly */
-#define TURN_ARM_THRESHOLD_MM 220u
+#define TURN_ARM_THRESHOLD_MM 100u
 
 /* Debounce */
 #define CLOSE_DEBOUNCE_SAMPLES 2u
