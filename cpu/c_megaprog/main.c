@@ -79,7 +79,12 @@ static bool recover_tof4m(void)
 int main(void)
 {
     {
-        static const uint8_t stop_motors[4] = { 0u, 0u, 0u, 0u };
+        uint8_t stop_motors[4];
+        stop_motors[0] = 0u;
+        stop_motors[1] = 0u;
+        stop_motors[2] = 0u;
+        stop_motors[3] = 0u;
+
         (void)i2c_write_reg8_burst(ROVER_I2C_ADDR_DEFAULT,
                                    0x00u,
                                    stop_motors,
