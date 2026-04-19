@@ -2,50 +2,54 @@
 
 #include "rover.h"
 #include "rover_high.h"
-
 #include "vl53l1x_simple.h"
 
 #define disp ((volatile uint16_t*)0x20)
 
-#define LOOPS_PER_MS 50000u
-void sleep_ms(uint32_t ms)
+#define LOOPS_PER_MS 7000u
+static void sleep_ms(uint32_t ms)
 {
-    for (uint32_t m = 0u; m < ms; ++m) {
-        for (volatile uint32_t i = 0u; i < LOOPS_PER_MS; ++i) {
+    uint32_t m;
+    for (m = 0u; m < ms; ++m) {
+        volatile uint32_t i;
+        for (i = 0u; i < LOOPS_PER_MS; ++i) {
             __asm__ volatile ("" ::: "memory");
         }
     }
 }
 
+/* ---------- States ---------- */
+#define STATE_STRAIGHT 0u
+#define STATE_RIGHT    1u
+#define STATE_LEFT     2u
+#define STATE_FINISH   3u
+
 /* ---------- Tunable knobs ---------- */
 
-/* Opening detected when distance >= this */
-#define OPEN_THRESHOLD_MM 300
+/* Full speed straight */
+#define STRAIGHT_SPEED 127
 
-/* Must fall below this before we arm the next opening detect */
-#define REARM_THRESHOLD_MM 220
+/* Curved turns: outer side fast, inner side slower */
+#define TURN_OUTER_SPEED 127
+#define TURN_INNER_SPEED 55
 
-/* Require N consecutive samples before triggering */
-#define OPEN_DEBOUNCE_SAMPLES 3
-#define REARM_DEBOUNCE_SAMPLES 3
+/* Start the first turn when something is close in front */
+#define STRAIGHT_TRIGGER_MM 180u
 
-/*
- * Turn duration in milliseconds.
- * Tune these on hardware until the rover makes the angle you want.
- */
-#define RIGHT_TURN_MS 300u
-#define LEFT_TURN_MS  300u
+/* Consider the path "open" while turning when distance rises above this */
+#define TURN_OPEN_THRESHOLD_MM 320u
 
-/* ---------- State machine ---------- */
+/* Small re-arm threshold to stop LEFT from finishing instantly */
+#define TURN_ARM_THRESHOLD_MM 220u
 
-typedef enum {
-    STATE_FIND_FIRST_OPEN = 0,
-    STATE_TURN_RIGHT,
-    STATE_REARM_SECOND_OPEN,
-    STATE_FIND_SECOND_OPEN,
-    STATE_TURN_LEFT,
-    STATE_FINAL_STRAIGHT
-} robot_state_t;
+/* Debounce */
+#define CLOSE_DEBOUNCE_SAMPLES 2u
+#define OPEN_DEBOUNCE_SAMPLES  2u
+#define ARM_DEBOUNCE_SAMPLES   2u
+
+/* Keep turning a bit after the opening is detected */
+#define RIGHT_SETTLE_MS 120u
+#define LEFT_SETTLE_MS  120u
 
 static void fatal(uint16_t code)
 {
@@ -56,33 +60,33 @@ static void fatal(uint16_t code)
 
 int main(void)
 {
-    uint16_t distance_mm = 0;
-    uint8_t hit_count = 0;
-    uint8_t rearm_count = 0;
-    robot_state_t state = STATE_FIND_FIRST_OPEN;
+    uint16_t distance_mm = 0u;
+    uint8_t state = STATE_STRAIGHT;
+
+    uint8_t close_count = 0u;
+    uint8_t open_count = 0u;
+    uint8_t arm_count = 0u;
+    uint8_t turn_armed = 0u;
+
+    vl53l1x_poll_result_t r;
 
     rover_t rover;
     rover_high_t high;
     rover_high_config_t cfg;
 
     if (!vl53l1x_init()) {
-        fatal(0xFFF1);
+        fatal(0xFFF1u);
     }
 
     if (!rover_init(&rover, ROVER_I2C_ADDR_DEFAULT)) {
-        fatal(0xFFF4);
+        fatal(0xFFF4u);
     }
 
     if (!rover_probe(&rover)) {
-        fatal(0xFFF5);
+        fatal(0xFFF5u);
     }
 
     rover_high_default_config(&cfg);
-
-    /*
-     * Tune these for your robot.
-     * These are examples only.
-     */
 
     /* Fix wheel direction if needed */
     cfg.invert_front_left  = false;
@@ -91,119 +95,149 @@ int main(void)
     cfg.invert_rear_right  = false;
 
     /* Straight */
-    cfg.straight_left_speed  = 127;
-    cfg.straight_right_speed = 127;
+    cfg.straight_left_speed  = STRAIGHT_SPEED;
+    cfg.straight_right_speed = STRAIGHT_SPEED;
 
-    /* Right turn */
-    cfg.turn_right_left_speed  =  127;
-    cfg.turn_right_right_speed = -127;
+    /* Curved right: left side faster than right side */
+    cfg.turn_right_left_speed  = TURN_OUTER_SPEED;
+    cfg.turn_right_right_speed = TURN_INNER_SPEED;
 
-    /* Left turn */
-    cfg.turn_left_left_speed  = -127;
-    cfg.turn_left_right_speed = 127;
+    /* Curved left: right side faster than left side */
+    cfg.turn_left_left_speed  = TURN_INNER_SPEED;
+    cfg.turn_left_right_speed = TURN_OUTER_SPEED;
 
     if (!rover_high_init(&high, &rover, &cfg)) {
-        fatal(0xFFF6);
+        fatal(0xFFF6u);
     }
 
+    rover_high_go_straight(&high);
+
     while (1) {
-        sleep_ms(15);
-        vl53l1x_poll_result_t r = vl53l1x_poll(&distance_mm);
-        sleep_ms(15);
-        volatile robot_state_t current_state;
+        sleep_ms(15u);
+        r = vl53l1x_poll(&distance_mm);
+        sleep_ms(15u);
 
         if (r == VL53L1X_POLL_ERROR) {
             rover_high_stop(&high);
-            fatal(0xFFF3);
+            fatal(0xFFF3u);
         }
 
-        current_state = state;
-
-        if (current_state == STATE_FIND_FIRST_OPEN) {
+        if (state == STATE_STRAIGHT) {
             rover_high_go_straight(&high);
 
             if (r == VL53L1X_POLL_OK) {
                 *disp = distance_mm;
 
-                if (distance_mm >= OPEN_THRESHOLD_MM) {
-                    if (hit_count < 255) {
-                        ++hit_count;
+                if (distance_mm <= STRAIGHT_TRIGGER_MM) {
+                    if (close_count < 255u) {
+                        ++close_count;
                     }
-                    if (hit_count >= OPEN_DEBOUNCE_SAMPLES) {
-                        state = STATE_TURN_RIGHT;
-                        hit_count = 0;
+
+                    if (close_count >= CLOSE_DEBOUNCE_SAMPLES) {
+                        state = STATE_RIGHT;
+                        close_count = 0u;
+                        open_count = 0u;
+                        arm_count = 0u;
+                        turn_armed = 1u;   /* already saw something close */
+                        rover_high_turn_right(&high);
                     }
                 } else {
-                    hit_count = 0;
+                    close_count = 0u;
                 }
             } else {
-                *disp = 0xFFF2;
+                *disp = 0xFFF2u;
             }
+
             continue;
         }
 
-        if (current_state == STATE_TURN_RIGHT) {
+        if (state == STATE_RIGHT) {
             rover_high_turn_right(&high);
-            *disp = 0x9001;
-            sleep_ms(RIGHT_TURN_MS);
-            rover_high_go_straight(&high);
-            state = STATE_REARM_SECOND_OPEN;
-            rearm_count = 0;
-            continue;
-        }
-
-        if (current_state == STATE_REARM_SECOND_OPEN) {
-            rover_high_go_straight(&high);
 
             if (r == VL53L1X_POLL_OK) {
                 *disp = distance_mm;
 
-                if (distance_mm <= REARM_THRESHOLD_MM) {
-                    if (rearm_count < 255) {
-                        ++rearm_count;
-                    }
-                    if (rearm_count >= REARM_DEBOUNCE_SAMPLES) {
-                        state = STATE_FIND_SECOND_OPEN;
-                        rearm_count = 0;
+                if (turn_armed == 0u) {
+                    if (distance_mm <= TURN_ARM_THRESHOLD_MM) {
+                        if (arm_count < 255u) {
+                            ++arm_count;
+                        }
+
+                        if (arm_count >= ARM_DEBOUNCE_SAMPLES) {
+                            turn_armed = 1u;
+                            arm_count = 0u;
+                            open_count = 0u;
+                        }
+                    } else {
+                        arm_count = 0u;
                     }
                 } else {
-                    rearm_count = 0;
+                    if (distance_mm >= TURN_OPEN_THRESHOLD_MM) {
+                        if (open_count < 255u) {
+                            ++open_count;
+                        }
+
+                        if (open_count >= OPEN_DEBOUNCE_SAMPLES) {
+                            sleep_ms(RIGHT_SETTLE_MS);
+                            state = STATE_LEFT;
+                            open_count = 0u;
+                            arm_count = 0u;
+                            turn_armed = 0u;
+                            rover_high_turn_left(&high);
+                        }
+                    } else {
+                        open_count = 0u;
+                    }
                 }
             } else {
-                *disp = 0xFFF2;
+                *disp = 0x9001u;
             }
+
             continue;
         }
 
-        if (current_state == STATE_FIND_SECOND_OPEN) {
-            rover_high_go_straight(&high);
-
-            if (r == VL53L1X_POLL_OK) {
-                *disp = distance_mm;
-
-                if (distance_mm >= OPEN_THRESHOLD_MM) {
-                    if (hit_count < 255) {
-                        ++hit_count;
-                    }
-                    if (hit_count >= OPEN_DEBOUNCE_SAMPLES) {
-                        state = STATE_TURN_LEFT;
-                        hit_count = 0;
-                    }
-                } else {
-                    hit_count = 0;
-                }
-            } else {
-                *disp = 0xFFF2;
-            }
-            continue;
-        }
-
-        if (current_state == STATE_TURN_LEFT) {
+        if (state == STATE_LEFT) {
             rover_high_turn_left(&high);
-            *disp = 0x9002;
-            sleep_ms(LEFT_TURN_MS);
-            rover_high_go_straight(&high);
-            state = STATE_FINAL_STRAIGHT;
+
+            if (r == VL53L1X_POLL_OK) {
+                *disp = distance_mm;
+
+                if (turn_armed == 0u) {
+                    if (distance_mm <= TURN_ARM_THRESHOLD_MM) {
+                        if (arm_count < 255u) {
+                            ++arm_count;
+                        }
+
+                        if (arm_count >= ARM_DEBOUNCE_SAMPLES) {
+                            turn_armed = 1u;
+                            arm_count = 0u;
+                            open_count = 0u;
+                        }
+                    } else {
+                        arm_count = 0u;
+                    }
+                } else {
+                    if (distance_mm >= TURN_OPEN_THRESHOLD_MM) {
+                        if (open_count < 255u) {
+                            ++open_count;
+                        }
+
+                        if (open_count >= OPEN_DEBOUNCE_SAMPLES) {
+                            sleep_ms(LEFT_SETTLE_MS);
+                            state = STATE_FINISH;
+                            open_count = 0u;
+                            arm_count = 0u;
+                            turn_armed = 0u;
+                            rover_high_go_straight(&high);
+                        }
+                    } else {
+                        open_count = 0u;
+                    }
+                }
+            } else {
+                *disp = 0x9002u;
+            }
+
             continue;
         }
 
@@ -212,7 +246,7 @@ int main(void)
         if (r == VL53L1X_POLL_OK) {
             *disp = distance_mm;
         } else {
-            *disp = 0xFFF2;
+            *disp = 0xFFF2u;
         }
     }
 }
