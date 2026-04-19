@@ -1,15 +1,15 @@
 #include "i2c.h"
 
 /* MMIO registers */
-static volatile uint8_t* const cmd_valid_i      = (uint8_t*)0x24;
-static volatile uint8_t* const cmd_i            = (uint8_t*)0x28;
-static volatile uint8_t* const din_i            = (uint8_t*)0x2C;
-static volatile uint8_t* const dout_o           = (uint8_t*)0x30;
-static volatile uint8_t* const rx_ack_o         = (uint8_t*)0x34;
-static volatile uint8_t* const ready_o          = (uint8_t*)0x38;
-static volatile uint8_t* const arb_lost_o       = (uint8_t*)0x3C;
-static volatile uint8_t* const arb_lost_clear_i = (uint8_t*)0x40;
-static volatile uint8_t* const busy_o           = (uint8_t*)0x44;
+#define cmd_valid_i      ((uint8_t*)0x24)
+#define cmd_i            ((uint8_t*)0x28)
+#define din_i            ((uint8_t*)0x2C)
+#define dout_o           ((uint8_t*)0x30)
+#define rx_ack_o         ((uint8_t*)0x34)
+#define ready_o          ((uint8_t*)0x38)
+#define arb_lost_o       ((uint8_t*)0x3C)
+#define arb_lost_clear_i ((uint8_t*)0x40)
+#define busy_o           ((uint8_t*)0x44)
 
 /* Core commands */
 #define I2C_CMD_START    1u
@@ -21,12 +21,6 @@ static volatile uint8_t* const busy_o           = (uint8_t*)0x44;
 #ifndef I2C_TIMEOUT_ITER
 #define I2C_TIMEOUT_ITER 1000000u
 #endif
-
-static bool i2c_start(void);
-static bool i2c_restart(void);
-static bool i2c_stop(void);
-static bool i2c_write_byte(uint8_t byte);
-static bool i2c_read_byte(uint8_t* byte, bool send_nack);
 
 static bool i2c_wait_ready(void)
 {
@@ -169,22 +163,22 @@ static bool i2c_prepare_transaction(void)
  * Level 1: private byte-level primitives
  * ========================================================================= */
 
-static bool i2c_start(void)
+bool i2c_start(void)
 {
     return i2c_exec_cmd(I2C_CMD_START, 0u);
 }
 
-static bool i2c_restart(void)
+bool i2c_restart(void)
 {
     return i2c_exec_cmd(I2C_CMD_RESTART, 0u);
 }
 
-static bool i2c_stop(void)
+bool i2c_stop(void)
 {
     return i2c_exec_cmd(I2C_CMD_STOP, 0u);
 }
 
-static bool i2c_write_byte(uint8_t byte)
+bool i2c_write_byte(uint8_t byte)
 {
     if (!i2c_exec_cmd(I2C_CMD_WRITE, byte)) {
         return false;
@@ -194,7 +188,7 @@ static bool i2c_write_byte(uint8_t byte)
     return (((*rx_ack_o) & 1u) == 0u);
 }
 
-static bool i2c_read_byte(uint8_t* byte, bool send_nack)
+bool i2c_read_byte(uint8_t* byte, bool send_nack)
 {
     if (byte == NULL) {
         return false;

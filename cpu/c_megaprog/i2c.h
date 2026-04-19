@@ -5,6 +5,12 @@
 #include <stddef.h>
 #include <stdbool.h>
 
+bool i2c_start(void);
+bool i2c_restart(void);
+bool i2c_stop(void);
+bool i2c_write_byte(uint8_t byte);
+bool i2c_read_byte(uint8_t *byte, bool send_nack);
+
 /*
  * Blocking I2C transactions.
  *

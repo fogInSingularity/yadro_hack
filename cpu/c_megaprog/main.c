@@ -5,26 +5,26 @@
 
 #include "vl53l1x_simple.h"
 
-volatile uint16_t* disp = (uint16_t*)0x20;
+#define disp ((uint16_t*)0x20)
 
 /* ---------- Tunable knobs ---------- */
 
 /* Opening detected when distance >= this */
-static const uint16_t OPEN_THRESHOLD_MM = 300;
+#define OPEN_THRESHOLD_MM 300
 
 /* Must fall below this before we arm the next opening detect */
-static const uint16_t REARM_THRESHOLD_MM = 220;
+#define REARM_THRESHOLD_MM 220
 
 /* Require N consecutive samples before triggering */
-static const uint8_t OPEN_DEBOUNCE_SAMPLES = 3;
-static const uint8_t REARM_DEBOUNCE_SAMPLES = 3;
+#define OPEN_DEBOUNCE_SAMPLES 3
+#define REARM_DEBOUNCE_SAMPLES 3
 
 /*
  * Turn duration in main-loop iterations.
  * Tune these on hardware until the rover makes the angle you want.
  */
-static const uint32_t RIGHT_TURN_TICKS = 18000;
-static const uint32_t LEFT_TURN_TICKS  = 18000;
+#define RIGHT_TURN_TICKS 18000
+#define LEFT_TURN_TICKS  18000
 
 /* ---------- State machine ---------- */
 
@@ -99,14 +99,16 @@ int main(void)
 
     while (1) {
         vl53l1x_poll_result_t r = vl53l1x_poll(&distance_mm);
+        volatile robot_state_t current_state;
 
         if (r == VL53L1X_POLL_ERROR) {
             rover_high_stop(&high);
             fatal(0xFFF3);
         }
 
-        switch (state) {
-        case STATE_FIND_FIRST_OPEN:
+        current_state = state;
+
+        if (current_state == STATE_FIND_FIRST_OPEN) {
             rover_high_go_straight(&high);
 
             if (r == VL53L1X_POLL_OK) {
@@ -127,9 +129,10 @@ int main(void)
             } else {
                 *disp = 0xFFF2;
             }
-            break;
+            continue;
+        }
 
-        case STATE_TURN_RIGHT:
+        if (current_state == STATE_TURN_RIGHT) {
             rover_high_turn_right(&high);
             *disp = 0x9001;
 
@@ -139,9 +142,10 @@ int main(void)
                 state = STATE_REARM_SECOND_OPEN;
                 rearm_count = 0;
             }
-            break;
+            continue;
+        }
 
-        case STATE_REARM_SECOND_OPEN:
+        if (current_state == STATE_REARM_SECOND_OPEN) {
             rover_high_go_straight(&high);
 
             if (r == VL53L1X_POLL_OK) {
@@ -161,9 +165,10 @@ int main(void)
             } else {
                 *disp = 0xFFF2;
             }
-            break;
+            continue;
+        }
 
-        case STATE_FIND_SECOND_OPEN:
+        if (current_state == STATE_FIND_SECOND_OPEN) {
             rover_high_go_straight(&high);
 
             if (r == VL53L1X_POLL_OK) {
@@ -184,9 +189,10 @@ int main(void)
             } else {
                 *disp = 0xFFF2;
             }
-            break;
+            continue;
+        }
 
-        case STATE_TURN_LEFT:
+        if (current_state == STATE_TURN_LEFT) {
             rover_high_turn_left(&high);
             *disp = 0x9002;
 
@@ -195,18 +201,15 @@ int main(void)
             } else {
                 state = STATE_FINAL_STRAIGHT;
             }
-            break;
+            continue;
+        }
 
-        case STATE_FINAL_STRAIGHT:
-        default:
-            rover_high_go_straight(&high);
+        rover_high_go_straight(&high);
 
-            if (r == VL53L1X_POLL_OK) {
-                *disp = distance_mm;
-            } else {
-                *disp = 0xFFF2;
-            }
-            break;
+        if (r == VL53L1X_POLL_OK) {
+            *disp = distance_mm;
+        } else {
+            *disp = 0xFFF2;
         }
     }
 }

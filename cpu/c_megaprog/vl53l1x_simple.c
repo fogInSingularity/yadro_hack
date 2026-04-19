@@ -4,481 +4,465 @@
 #include <stddef.h>
 
 /*
- * Replace this with a real delay if you have one:
+ * Minimal ToF4M driver.
  *
- *   #define VL53L1X_DELAY_US(us) delay_us(us)
+ * The public names still say vl53l1x because your main.c already uses them.
+ * Internally this is written to match your working SystemVerilog transaction
+ * sequence for the M5Stack ToF4M / VL53L1CX unit.
  *
- * before compiling this file.
+ * This version avoids file-scope objects so the build does not need .bss,
+ * .data, or .rodata support. All persistent values are either in hardware,
+ * on the stack, or passed in by the caller.
  */
-#ifndef VL53L1X_DELAY_US
-static void vl53l1x_default_delay_us(uint32_t us)
-{
-    volatile uint32_t n = us << 3;
-    while (n-- != 0u) { }
-}
-#define VL53L1X_DELAY_US(us) vl53l1x_default_delay_us((uint32_t)(us))
-#endif
 
-#ifndef VL53L1X_BOOT_POLL_COUNT
-#define VL53L1X_BOOT_POLL_COUNT 10000u
-#endif
-
-#define VL53L1X_TARGET_RATE                 0x0A00u
-#define VL53L1X_TIMING_GUARD_US            4528u
-#define VL53L1X_RESULT_BUF_LEN               17u
-
-#define REG_SOFT_RESET                                      0x0000u
-#define REG_OSC_MEASURED__FAST_OSC__FREQUENCY              0x0006u
-#define REG_VHV_CONFIG__TIMEOUT_MACROP_LOOP_BOUND           0x0008u
-#define REG_VHV_CONFIG__INIT                                0x000Bu
-#define REG_ALGO__PART_TO_PART_RANGE_OFFSET_MM              0x001Eu
-#define REG_DSS_CONFIG__TARGET_TOTAL_RATE_MCPS              0x0024u
-#define REG_MM_CONFIG__OUTER_OFFSET_MM                      0x0022u
-#define REG_PAD_I2C_HV__EXTSUP_CONFIG                       0x002Eu
-#define REG_GPIO__TIO_HV_STATUS                             0x0031u
-#define REG_SIGMA_ESTIMATOR__EFFECTIVE_PULSE_WIDTH_NS       0x0036u
-#define REG_SIGMA_ESTIMATOR__EFFECTIVE_AMBIENT_WIDTH_NS     0x0037u
-#define REG_ALGO__CROSSTALK_COMPENSATION_VALID_HEIGHT_MM    0x0039u
-#define REG_ALGO__RANGE_IGNORE_VALID_HEIGHT_MM              0x003Eu
-#define REG_ALGO__RANGE_MIN_CLIP                            0x003Fu
-#define REG_ALGO__CONSISTENCY_CHECK__TOLERANCE              0x0040u
-#define REG_PHASECAL_CONFIG__TIMEOUT_MACROP                 0x004Bu
-#define REG_CAL_CONFIG__VCSEL_START                         0x0047u
-#define REG_PHASECAL_CONFIG__OVERRIDE                       0x004Du
-#define REG_DSS_CONFIG__ROI_MODE_CONTROL                    0x004Fu
-#define REG_SYSTEM__THRESH_RATE_HIGH                        0x0050u
-#define REG_SYSTEM__THRESH_RATE_LOW                         0x0052u
-#define REG_DSS_CONFIG__MANUAL_EFFECTIVE_SPADS_SELECT       0x0054u
-#define REG_DSS_CONFIG__APERTURE_ATTENUATION                0x0057u
-#define REG_MM_CONFIG__TIMEOUT_MACROP_A                     0x005Au
-#define REG_MM_CONFIG__TIMEOUT_MACROP_B                     0x005Cu
-#define REG_RANGE_CONFIG__TIMEOUT_MACROP_A                  0x005Eu
-#define REG_RANGE_CONFIG__VCSEL_PERIOD_A                    0x0060u
-#define REG_RANGE_CONFIG__TIMEOUT_MACROP_B                  0x0061u
-#define REG_RANGE_CONFIG__VCSEL_PERIOD_B                    0x0063u
-#define REG_RANGE_CONFIG__SIGMA_THRESH                      0x0064u
-#define REG_RANGE_CONFIG__MIN_COUNT_RATE_RTN_LIMIT_MCPS     0x0066u
-#define REG_RANGE_CONFIG__VALID_PHASE_HIGH                  0x0069u
-#define REG_SYSTEM__INTERMEASUREMENT_PERIOD                 0x006Cu
-#define REG_SYSTEM__GROUPED_PARAMETER_HOLD_0                0x0071u
-#define REG_SYSTEM__SEED_CONFIG                             0x0077u
-#define REG_SD_CONFIG__WOI_SD0                              0x0078u
-#define REG_SD_CONFIG__WOI_SD1                              0x0079u
-#define REG_SD_CONFIG__INITIAL_PHASE_SD0                    0x007Au
-#define REG_SD_CONFIG__INITIAL_PHASE_SD1                    0x007Bu
-#define REG_SYSTEM__GROUPED_PARAMETER_HOLD_1                0x007Cu
-#define REG_SD_CONFIG__QUANTIFIER                           0x007Eu
-#define REG_SYSTEM__SEQUENCE_CONFIG                         0x0081u
-#define REG_SYSTEM__GROUPED_PARAMETER_HOLD                  0x0082u
-#define REG_SYSTEM__INTERRUPT_CLEAR                         0x0086u
-#define REG_SYSTEM__MODE_START                              0x0087u
-#define REG_RESULT__RANGE_STATUS                            0x0089u
-#define REG_PHASECAL_RESULT__VCSEL_START                    0x00D8u
-#define REG_RESULT__OSC_CALIBRATE_VAL                       0x00DEu
-#define REG_FIRMWARE__SYSTEM_STATUS                         0x00E5u
-#define REG_IDENTIFICATION__MODEL_ID                        0x010Fu
-
-#define VL53L1X_RANGE_STATUS_COMPLETE                         9u
-
-struct vl53l1x_results {
-    uint8_t  range_status;
-    uint8_t  stream_count;
-    uint16_t dss_actual_effective_spads_sd0;
-    uint16_t ambient_count_rate_mcps_sd0;
-    uint16_t final_crosstalk_corrected_range_mm_sd0;
-    uint16_t peak_signal_count_rate_crosstalk_corrected_mcps_sd0;
-};
-
-static uint16_t fast_osc_frequency;
-static uint16_t osc_calibrate_val;
-static bool calibrated;
-static uint8_t saved_vhv_init;
-static uint8_t saved_vhv_timeout;
-
-
-/* ------------------------------------------------------------------------- */
-/* Low-level register access via write_burst/read_burst                      */
-/* ------------------------------------------------------------------------- */
-
-static bool vl53l1x_write8(uint16_t reg, uint8_t value)
-{
-    uint8_t buf[3];
-
-    buf[0] = (uint8_t)(reg >> 8);
-    buf[1] = (uint8_t)reg;
-    buf[2] = value;
-
-    return write_burst(VL53L1X_ADDR, buf, sizeof(buf));
-}
-
-static bool vl53l1x_write16(uint16_t reg, uint16_t value)
-{
-    uint8_t buf[4];
-
-    buf[0] = (uint8_t)(reg >> 8);
-    buf[1] = (uint8_t)reg;
-    buf[2] = (uint8_t)(value >> 8);
-    buf[3] = (uint8_t)value;
-
-    return write_burst(VL53L1X_ADDR, buf, sizeof(buf));
-}
-
-static bool vl53l1x_write32(uint16_t reg, uint32_t value)
-{
-    uint8_t buf[6];
-
-    buf[0] = (uint8_t)(reg >> 8);
-    buf[1] = (uint8_t)reg;
-    buf[2] = (uint8_t)(value >> 24);
-    buf[3] = (uint8_t)(value >> 16);
-    buf[4] = (uint8_t)(value >> 8);
-    buf[5] = (uint8_t)value;
-
-    return write_burst(VL53L1X_ADDR, buf, sizeof(buf));
-}
+#define TOF4M_KEEP_SYMBOL __attribute__((used, noinline, externally_visible))
 
 /*
- * Register reads are done as:
- *   1) write_burst(addr, reg_hi, reg_lo)
- *   2) read_burst(addr, data...)
- *
- * This is two I2C transactions, not a repeated-start combined transaction.
- * That matches the behavior of the original Arduino code.
+ * Small RV32I software helpers.
+ * Keep these if your bare-metal RV32I build has no libgcc mul/div support.
  */
-static bool vl53l1x_read_multi(uint16_t reg, uint8_t *data, size_t len)
+
+typedef union {
+    uint64_t u64;
+    struct {
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+        uint32_t lo;
+        uint32_t hi;
+#else
+        uint32_t hi;
+        uint32_t lo;
+#endif
+    } w;
+} tof4m_u64_words_t;
+
+TOF4M_KEEP_SYMBOL uint64_t __ashldi3(uint64_t value, int shift)
 {
-    uint8_t reg_buf[2];
+    tof4m_u64_words_t in;
+    tof4m_u64_words_t out;
+    uint32_t s;
 
-    if ((len > 0u) && (data == NULL)) {
-        return false;
+    in.u64 = value;
+    out.w.lo = 0u;
+    out.w.hi = 0u;
+
+    if (shift <= 0) {
+        return value;
     }
 
-    reg_buf[0] = (uint8_t)(reg >> 8);
-    reg_buf[1] = (uint8_t)reg;
+    s = (uint32_t)shift;
 
-    if (!write_burst(VL53L1X_ADDR, reg_buf, sizeof(reg_buf))) {
-        return false;
+    if (s >= 64u) {
+        return 0u;
     }
 
-    return read_burst(VL53L1X_ADDR, data, len);
+    if (s >= 32u) {
+        out.w.hi = in.w.lo << (s - 32u);
+        return out.u64;
+    }
+
+    out.w.hi = (in.w.hi << s) | (in.w.lo >> (32u - s));
+    out.w.lo = in.w.lo << s;
+
+    return out.u64;
 }
 
-static bool vl53l1x_read8(uint16_t reg, uint8_t *value)
+TOF4M_KEEP_SYMBOL uint64_t __lshrdi3(uint64_t value, int shift)
 {
-    return vl53l1x_read_multi(reg, value, 1u);
-}
+    tof4m_u64_words_t in;
+    tof4m_u64_words_t out;
+    uint32_t s;
 
-static bool vl53l1x_read16(uint16_t reg, uint16_t *value)
-{
-    uint8_t buf[2];
+    in.u64 = value;
+    out.w.lo = 0u;
+    out.w.hi = 0u;
 
-    if (value == NULL) {
-        return false;
+    if (shift <= 0) {
+        return value;
     }
 
-    if (!vl53l1x_read_multi(reg, buf, sizeof(buf))) {
-        return false;
+    s = (uint32_t)shift;
+
+    if (s >= 64u) {
+        return 0u;
     }
 
-    *value = ((uint16_t)buf[0] << 8) | buf[1];
-    return true;
+    if (s >= 32u) {
+        out.w.lo = in.w.hi >> (s - 32u);
+        return out.u64;
+    }
+
+    out.w.lo = (in.w.lo >> s) | (in.w.hi << (32u - s));
+    out.w.hi = in.w.hi >> s;
+
+    return out.u64;
 }
 
-
-/* ------------------------------------------------------------------------- */
-/* Software arithmetic helpers for RV32I (no MUL/DIV instructions required)  */
-/* ------------------------------------------------------------------------- */
-
-static uint32_t vl53l1x_mul_u32_soft(uint32_t a, uint32_t b)
+static uint32_t tof4m_soft_mul_u32(uint32_t a, uint32_t b)
 {
-    uint32_t r = 0u;
+    uint32_t result = 0u;
 
     while (b != 0u) {
         if ((b & 1u) != 0u) {
-            r += a;
+            result += a;
         }
 
         a <<= 1;
         b >>= 1;
     }
 
-    return r;
+    return result;
 }
 
-static uint32_t vl53l1x_divmod_u32_soft(uint32_t num,
-                                        uint32_t den,
-                                        uint32_t *rem_out)
+static uint32_t tof4m_soft_udiv_u32(uint32_t numerator, uint32_t denominator)
 {
-    uint32_t q = 0u;
-    uint32_t bit = 1u;
+    uint32_t quotient = 0u;
+    uint32_t remainder = 0u;
 
-    if (den == 0u) {
-        if (rem_out != NULL) {
-            *rem_out = 0u;
-        }
+    if (denominator == 0u) {
         return 0u;
     }
 
-    while ((den < num) && ((den & 0x80000000u) == 0u)) {
-        den <<= 1;
-        bit <<= 1;
-    }
+    for (int bit = 31; bit >= 0; --bit) {
+        remainder <<= 1;
+        remainder |= (numerator >> bit) & 1u;
 
-    while (bit != 0u) {
-        if (num >= den) {
-            num -= den;
-            q |= bit;
-        }
-
-        den >>= 1;
-        bit >>= 1;
-    }
-
-    if (rem_out != NULL) {
-        *rem_out = num;
-    }
-
-    return q;
-}
-
-static uint32_t vl53l1x_div_shift12_round_u32(uint32_t num, uint32_t den)
-{
-    uint32_t q;
-    uint32_t rem;
-    uint32_t frac = 0u;
-    uint32_t half_floor;
-    uint32_t half_ceil;
-    uint8_t i;
-
-    if (den == 0u) {
-        return 0u;
-    }
-
-    q = vl53l1x_divmod_u32_soft(num, den, &rem);
-
-    if (q > 0x000FFFFFu) {
-        return 0xFFFFFFFFu;
-    }
-
-    q <<= 12;
-
-    half_floor = den >> 1;
-    half_ceil = half_floor + (den & 1u);
-
-    for (i = 0u; i < 12u; ++i) {
-        frac <<= 1;
-
-        if (rem >= half_ceil) {
-            frac |= 1u;
-
-            if ((den & 1u) == 0u) {
-                rem = (rem - half_floor) << 1;
-            } else {
-                rem = ((rem - half_ceil) << 1) | 1u;
-            }
-        } else {
-            rem <<= 1;
+        if (remainder >= denominator) {
+            remainder -= denominator;
+            quotient |= ((uint32_t)1u << bit);
         }
     }
 
-    q += frac;
+    return quotient;
+}
 
-    if (rem >= half_ceil) {
-        if (q != 0xFFFFFFFFu) {
-            q++;
+static uint64_t tof4m_soft_udiv_u64(uint64_t numerator, uint64_t denominator)
+{
+    uint64_t quotient = 0u;
+    uint64_t remainder = 0u;
+
+    if (denominator == 0u) {
+        return 0u;
+    }
+
+    for (int bit = 63; bit >= 0; --bit) {
+        remainder <<= 1;
+        remainder |= (numerator >> bit) & 1u;
+
+        if (remainder >= denominator) {
+            remainder -= denominator;
+            quotient |= (((uint64_t)1u) << bit);
         }
     }
 
-    return q;
+    return quotient;
 }
 
-static uint32_t vl53l1x_mul_u32_2011(uint32_t x)
+TOF4M_KEEP_SYMBOL uint32_t __mulsi3(uint32_t a, uint32_t b)
 {
-    return (x << 10) + (x << 9) + (x << 8) + (x << 7) +
-           (x << 6) + (x << 4) + (x << 3) + (x << 1) + x;
+    return tof4m_soft_mul_u32(a, b);
 }
 
-
-/* ------------------------------------------------------------------------- */
-/* Timing helpers                                                            */
-/* ------------------------------------------------------------------------- */
-
-static uint32_t vl53l1x_timeout_us_to_mclks(uint32_t timeout_us,
-                                            uint32_t macro_period_us)
+TOF4M_KEEP_SYMBOL uint32_t __udivsi3(uint32_t numerator, uint32_t denominator)
 {
-    return vl53l1x_div_shift12_round_u32(timeout_us, macro_period_us);
+    return tof4m_soft_udiv_u32(numerator, denominator);
 }
 
-static uint16_t vl53l1x_encode_timeout(uint32_t timeout_mclks)
+TOF4M_KEEP_SYMBOL uint64_t __udivdi3(uint64_t numerator, uint64_t denominator)
 {
-    uint32_t ls_byte;
-    uint16_t ms_byte = 0u;
-
-    if (timeout_mclks == 0u) {
-        return 0u;
-    }
-
-    ls_byte = timeout_mclks - 1u;
-
-    while ((ls_byte & 0xFFFFFF00u) != 0u) {
-        ls_byte >>= 1;
-        ms_byte++;
-    }
-
-    return (uint16_t)((ms_byte << 8) | (ls_byte & 0xFFu));
+    return tof4m_soft_udiv_u64(numerator, denominator);
 }
 
-static uint32_t vl53l1x_calc_macro_period(uint8_t vcsel_period)
+#ifndef VL53L1X_DELAY_US
+static void tof4m_delay_us(uint32_t us)
 {
-    uint32_t pll_period_us;
-    uint8_t vcsel_period_pclks;
-    uint32_t macro_period_us;
+    uint32_t count;
 
-    if (fast_osc_frequency == 0u) {
-        return 0u;
+    if (us == 0u) {
+        return;
     }
 
-    pll_period_us = vl53l1x_divmod_u32_soft(((uint32_t)1u << 30),
-                                            fast_osc_frequency,
-                                            NULL);
+    /*
+     * Approximate delay for 50 MHz core.
+     * 25 loop iterations/us, written without multiplication.
+     */
+    count = (us << 4) + (us << 3) + us;
 
-    vcsel_period_pclks = (uint8_t)((vcsel_period + 1u) << 1);
+    if (count == 0u) {
+        return;
+    }
 
-    macro_period_us = (pll_period_us << 11) + (pll_period_us << 8);
-    macro_period_us >>= 6;
-    macro_period_us = vl53l1x_mul_u32_soft(macro_period_us,
-                                           (uint32_t)vcsel_period_pclks);
-    macro_period_us >>= 6;
+#if defined(__riscv)
+    __asm__ volatile (
+        "1:\n"
+        "addi %[cnt], %[cnt], -1\n"
+        "bnez %[cnt], 1b\n"
+        : [cnt] "+r" (count)
+        :
+        : "memory"
+    );
+#else
+    while (count-- != 0u) {
+        __asm__ volatile ("" ::: "memory");
+    }
+#endif
+}
+#define VL53L1X_DELAY_US(us_) tof4m_delay_us((uint32_t)(us_))
+#endif
 
-    return macro_period_us;
+#ifndef TOF4M_BOOT_POLL_COUNT
+#define TOF4M_BOOT_POLL_COUNT 10000u
+#endif
+
+#ifndef TOF4M_STATUS_POLL_LIMIT
+#define TOF4M_STATUS_POLL_LIMIT 512u
+#endif
+
+#define REG_VHV_CONFIG__TIMEOUT_MACROP_LOOP_BOUND           0x0008u
+#define REG_VHV_CONFIG__INIT                                0x000Bu
+#define REG_PAD_I2C_HV__EXTSUP_CONFIG                       0x002Eu
+#define REG_GPIO_HV_MUX__CTRL                               0x0030u
+#define REG_GPIO__TIO_HV_STATUS                             0x0031u
+#define REG_SYSTEM__INTERRUPT_CLEAR                         0x0086u
+#define REG_SYSTEM__MODE_START                              0x0087u
+#define REG_RESULT__RANGE_STATUS                            0x0089u
+#define REG_RESULT__FINAL_CROSSTALK_CORRECTED_RANGE_MM_SD0  0x0096u
+#define REG_FIRMWARE__SYSTEM_STATUS                         0x00E5u
+#define REG_IDENTIFICATION__MODEL_ID                        0x010Fu
+
+#define REG_DEFAULT_CONFIG_BASE                             0x002Du
+
+#define TOF4M_START_RANGING_BACK_TO_BACK                    0x40u
+#define TOF4M_STOP_RANGING                                  0x00u
+#define TOF4M_CLEAR_RANGE_INTERRUPT                         0x01u
+
+#define TOF4M_RESULT_BUF_LEN                                17u
+#define TOF4M_DEFAULT_CFG_LEN                               91u
+
+typedef struct {
+    uint8_t  range_status;
+    uint8_t  stream_count;
+    uint16_t range_mm;
+} tof4m_result_t;
+
+static void tof4m_build_default_cfg(uint8_t *cfg)
+{
+    if (cfg == NULL) {
+        return;
+    }
+
+    cfg[0] = 0x00u;
+    cfg[1] = 0x00u;
+    cfg[2] = 0x00u;
+    cfg[3] = 0x01u;
+    cfg[4] = 0x02u;
+    cfg[5] = 0x00u;
+    cfg[6] = 0x02u;
+    cfg[7] = 0x08u;
+    cfg[8] = 0x00u;
+    cfg[9] = 0x08u;
+    cfg[10] = 0x10u;
+    cfg[11] = 0x01u;
+    cfg[12] = 0x01u;
+    cfg[13] = 0x00u;
+    cfg[14] = 0x00u;
+    cfg[15] = 0x00u;
+    cfg[16] = 0x00u;
+    cfg[17] = 0xFFu;
+    cfg[18] = 0x00u;
+    cfg[19] = 0x0Fu;
+    cfg[20] = 0x00u;
+    cfg[21] = 0x00u;
+    cfg[22] = 0x00u;
+    cfg[23] = 0x00u;
+    cfg[24] = 0x00u;
+    cfg[25] = 0x20u;
+    cfg[26] = 0x0Bu;
+    cfg[27] = 0x00u;
+    cfg[28] = 0x00u;
+    cfg[29] = 0x02u;
+    cfg[30] = 0x0Au;
+    cfg[31] = 0x21u;
+    cfg[32] = 0x00u;
+    cfg[33] = 0x00u;
+    cfg[34] = 0x05u;
+    cfg[35] = 0x00u;
+    cfg[36] = 0x00u;
+    cfg[37] = 0x00u;
+    cfg[38] = 0x00u;
+    cfg[39] = 0xC8u;
+    cfg[40] = 0x00u;
+    cfg[41] = 0x00u;
+    cfg[42] = 0x38u;
+    cfg[43] = 0xFFu;
+    cfg[44] = 0x01u;
+    cfg[45] = 0x00u;
+    cfg[46] = 0x08u;
+    cfg[47] = 0x00u;
+    cfg[48] = 0x00u;
+    cfg[49] = 0x01u;
+    cfg[50] = 0xCCu;
+    cfg[51] = 0x0Fu;
+    cfg[52] = 0x01u;
+    cfg[53] = 0xF1u;
+    cfg[54] = 0x0Du;
+    cfg[55] = 0x01u;
+    cfg[56] = 0x68u;
+    cfg[57] = 0x00u;
+    cfg[58] = 0x80u;
+    cfg[59] = 0x08u;
+    cfg[60] = 0xB8u;
+    cfg[61] = 0x00u;
+    cfg[62] = 0x00u;
+    cfg[63] = 0x00u;
+    cfg[64] = 0x00u;
+    cfg[65] = 0x0Fu;
+    cfg[66] = 0x89u;
+    cfg[67] = 0x00u;
+    cfg[68] = 0x00u;
+    cfg[69] = 0x00u;
+    cfg[70] = 0x00u;
+    cfg[71] = 0x00u;
+    cfg[72] = 0x00u;
+    cfg[73] = 0x00u;
+    cfg[74] = 0x01u;
+    cfg[75] = 0x0Fu;
+    cfg[76] = 0x0Du;
+    cfg[77] = 0x0Eu;
+    cfg[78] = 0x0Eu;
+    cfg[79] = 0x00u;
+    cfg[80] = 0x00u;
+    cfg[81] = 0x02u;
+    cfg[82] = 0xC7u;
+    cfg[83] = 0xFFu;
+    cfg[84] = 0x9Bu;
+    cfg[85] = 0x00u;
+    cfg[86] = 0x00u;
+    cfg[87] = 0x00u;
+    cfg[88] = 0x01u;
+    cfg[89] = 0x00u;
+    cfg[90] = 0x00u;
 }
 
-static bool vl53l1x_set_measurement_timing_budget(uint32_t budget_us)
+static bool tof4m_write_multi(uint16_t reg, const uint8_t *data, uint8_t len)
 {
-    uint8_t vcsel_period;
-    uint32_t macro_period_us;
-    uint32_t phasecal_timeout_mclks;
-    uint32_t range_config_timeout_us;
-
-    if (budget_us <= VL53L1X_TIMING_GUARD_US) {
+    if ((data == NULL) || (len == 0u)) {
         return false;
     }
 
-    range_config_timeout_us = budget_us - VL53L1X_TIMING_GUARD_US;
-
-    if (range_config_timeout_us > 1100000u) {
+    if (!i2c_start()) {
         return false;
     }
 
-    range_config_timeout_us >>= 1;
-
-    if (!vl53l1x_read8(REG_RANGE_CONFIG__VCSEL_PERIOD_A, &vcsel_period)) {
+    if (!i2c_write_byte((uint8_t)((VL53L1X_ADDR << 1) | 0u))) {
+        (void)i2c_stop();
         return false;
     }
 
-    macro_period_us = vl53l1x_calc_macro_period(vcsel_period);
-    if (macro_period_us == 0u) {
+    if (!i2c_write_byte((uint8_t)(reg >> 8))) {
+        (void)i2c_stop();
         return false;
     }
 
-    phasecal_timeout_mclks =
-        vl53l1x_timeout_us_to_mclks(1000u, macro_period_us);
-
-    if (phasecal_timeout_mclks > 0xFFu) {
-        phasecal_timeout_mclks = 0xFFu;
-    }
-
-    if (!vl53l1x_write8(REG_PHASECAL_CONFIG__TIMEOUT_MACROP,
-                        (uint8_t)phasecal_timeout_mclks)) {
+    if (!i2c_write_byte((uint8_t)reg)) {
+        (void)i2c_stop();
         return false;
     }
 
-    if (!vl53l1x_write16(
-            REG_MM_CONFIG__TIMEOUT_MACROP_A,
-            vl53l1x_encode_timeout(
-                vl53l1x_timeout_us_to_mclks(1u, macro_period_us)))) {
+    for (uint8_t i = 0u; i < len; ++i) {
+        if (!i2c_write_byte(data[i])) {
+            (void)i2c_stop();
+            return false;
+        }
+    }
+
+    return i2c_stop();
+}
+
+static bool tof4m_read_multi(uint16_t reg, uint8_t *data, uint8_t len)
+{
+    if ((data == NULL) || (len == 0u)) {
         return false;
     }
 
-    if (!vl53l1x_write16(
-            REG_RANGE_CONFIG__TIMEOUT_MACROP_A,
-            vl53l1x_encode_timeout(
-                vl53l1x_timeout_us_to_mclks(range_config_timeout_us,
-                                            macro_period_us)))) {
+    if (!i2c_start()) {
         return false;
     }
 
-    if (!vl53l1x_read8(REG_RANGE_CONFIG__VCSEL_PERIOD_B, &vcsel_period)) {
+    if (!i2c_write_byte((uint8_t)((VL53L1X_ADDR << 1) | 0u))) {
+        (void)i2c_stop();
         return false;
     }
 
-    macro_period_us = vl53l1x_calc_macro_period(vcsel_period);
-    if (macro_period_us == 0u) {
+    if (!i2c_write_byte((uint8_t)(reg >> 8))) {
+        (void)i2c_stop();
         return false;
     }
 
-    if (!vl53l1x_write16(
-            REG_MM_CONFIG__TIMEOUT_MACROP_B,
-            vl53l1x_encode_timeout(
-                vl53l1x_timeout_us_to_mclks(1u, macro_period_us)))) {
+    if (!i2c_write_byte((uint8_t)reg)) {
+        (void)i2c_stop();
         return false;
     }
 
-    if (!vl53l1x_write16(
-            REG_RANGE_CONFIG__TIMEOUT_MACROP_B,
-            vl53l1x_encode_timeout(
-                vl53l1x_timeout_us_to_mclks(range_config_timeout_us,
-                                            macro_period_us)))) {
+    if (!i2c_restart()) {
+        (void)i2c_stop();
         return false;
     }
 
+    if (!i2c_write_byte((uint8_t)((VL53L1X_ADDR << 1) | 1u))) {
+        (void)i2c_stop();
+        return false;
+    }
+
+    for (uint8_t i = 0u; i < len; ++i) {
+        bool send_nack = (i == (uint8_t)(len - 1u));
+
+        if (!i2c_read_byte(&data[i], send_nack)) {
+            (void)i2c_stop();
+            return false;
+        }
+    }
+
+    return i2c_stop();
+}
+
+static bool tof4m_write8(uint16_t reg, uint8_t value)
+{
+    return tof4m_write_multi(reg, &value, 1u);
+}
+
+static bool tof4m_read8(uint16_t reg, uint8_t *value)
+{
+    return tof4m_read_multi(reg, value, 1u);
+}
+
+static bool tof4m_read16(uint16_t reg, uint16_t *value)
+{
+    uint8_t data[2];
+
+    if (value == NULL) {
+        return false;
+    }
+
+    if (!tof4m_read_multi(reg, data, 2u)) {
+        return false;
+    }
+
+    *value = ((uint16_t)data[0] << 8) | data[1];
     return true;
 }
 
-static bool vl53l1x_set_long_distance_mode(void)
+static bool tof4m_clear_interrupt(void)
 {
-    if (!vl53l1x_write8(REG_RANGE_CONFIG__VCSEL_PERIOD_A, 0x0Fu)) {
-        return false;
-    }
-
-    if (!vl53l1x_write8(REG_RANGE_CONFIG__VCSEL_PERIOD_B, 0x0Du)) {
-        return false;
-    }
-
-    if (!vl53l1x_write8(REG_RANGE_CONFIG__VALID_PHASE_HIGH, 0xB8u)) {
-        return false;
-    }
-
-    if (!vl53l1x_write8(REG_SD_CONFIG__WOI_SD0, 0x0Fu)) {
-        return false;
-    }
-
-    if (!vl53l1x_write8(REG_SD_CONFIG__WOI_SD1, 0x0Du)) {
-        return false;
-    }
-
-    if (!vl53l1x_write8(REG_SD_CONFIG__INITIAL_PHASE_SD0, 14u)) {
-        return false;
-    }
-
-    if (!vl53l1x_write8(REG_SD_CONFIG__INITIAL_PHASE_SD1, 14u)) {
-        return false;
-    }
-
-    return vl53l1x_set_measurement_timing_budget(VL53L1X_TIMING_BUDGET_US);
+    return tof4m_write8(REG_SYSTEM__INTERRUPT_CLEAR,
+                        TOF4M_CLEAR_RANGE_INTERRUPT);
 }
 
-
-/* ------------------------------------------------------------------------- */
-/* Sensor helpers                                                            */
-/* ------------------------------------------------------------------------- */
-
-static bool vl53l1x_wait_boot(void)
+static bool tof4m_wait_boot(void)
 {
     uint8_t status = 0u;
 
-    for (uint32_t i = 0u; i < VL53L1X_BOOT_POLL_COUNT; ++i) {
-        if (vl53l1x_read8(REG_FIRMWARE__SYSTEM_STATUS, &status) &&
+    for (uint32_t i = 0u; i < TOF4M_BOOT_POLL_COUNT; ++i) {
+        if (tof4m_read8(REG_FIRMWARE__SYSTEM_STATUS, &status) &&
             ((status & 0x01u) != 0u)) {
             return true;
         }
@@ -489,315 +473,257 @@ static bool vl53l1x_wait_boot(void)
     return false;
 }
 
-static bool vl53l1x_data_ready(bool *ready)
+static bool tof4m_get_interrupt_ready_level(uint8_t *level)
+{
+    uint8_t mux;
+
+    if (level == NULL) {
+        return false;
+    }
+
+    if (!tof4m_read8(REG_GPIO_HV_MUX__CTRL, &mux)) {
+        return false;
+    }
+
+    /*
+     * Same as your SV:
+     * irq_ready_level = ~GPIO_HV_MUX__CTRL[4]
+     */
+    *level = (uint8_t)(!((mux >> 4) & 0x01u));
+    return true;
+}
+
+static bool tof4m_data_ready(bool *ready)
 {
     uint8_t gpio_status;
+    uint8_t irq_ready_level;
 
     if (ready == NULL) {
         return false;
     }
 
-    if (!vl53l1x_read8(REG_GPIO__TIO_HV_STATUS, &gpio_status)) {
+    if (!tof4m_read8(REG_GPIO__TIO_HV_STATUS, &gpio_status)) {
         return false;
     }
 
-    *ready = ((gpio_status & 0x01u) == 0u);
+    if (!tof4m_get_interrupt_ready_level(&irq_ready_level)) {
+        return false;
+    }
+
+    *ready = ((gpio_status & 0x01u) == irq_ready_level);
     return true;
 }
 
-static bool vl53l1x_read_results(struct vl53l1x_results *r)
+static bool tof4m_wait_data_ready(uint32_t max_polls, bool *timed_out)
 {
-    uint8_t b[VL53L1X_RESULT_BUF_LEN];
+    bool ready = false;
 
-    if (r == NULL) {
-        return false;
+    if (timed_out != NULL) {
+        *timed_out = false;
     }
 
-    if (!vl53l1x_read_multi(REG_RESULT__RANGE_STATUS, b, sizeof(b))) {
-        return false;
-    }
-
-    r->range_status = b[0];
-    r->stream_count = b[2];
-
-    r->dss_actual_effective_spads_sd0 =
-        ((uint16_t)b[3] << 8) | b[4];
-
-    r->ambient_count_rate_mcps_sd0 =
-        ((uint16_t)b[7] << 8) | b[8];
-
-    r->final_crosstalk_corrected_range_mm_sd0 =
-        ((uint16_t)b[13] << 8) | b[14];
-
-    r->peak_signal_count_rate_crosstalk_corrected_mcps_sd0 =
-        ((uint16_t)b[15] << 8) | b[16];
-
-    return true;
-}
-
-static bool vl53l1x_setup_manual_calibration(void)
-{
-    uint8_t phasecal_vcsel_start;
-
-    if (!vl53l1x_read8(REG_VHV_CONFIG__INIT, &saved_vhv_init)) {
-        return false;
-    }
-
-    if (!vl53l1x_read8(REG_VHV_CONFIG__TIMEOUT_MACROP_LOOP_BOUND,
-                       &saved_vhv_timeout)) {
-        return false;
-    }
-
-    if (!vl53l1x_write8(REG_VHV_CONFIG__INIT,
-                        (uint8_t)(saved_vhv_init & 0x7Fu))) {
-        return false;
-    }
-
-    if (!vl53l1x_write8(
-            REG_VHV_CONFIG__TIMEOUT_MACROP_LOOP_BOUND,
-            (uint8_t)((saved_vhv_timeout & 0x03u) + (3u << 2)))) {
-        return false;
-    }
-
-    if (!vl53l1x_write8(REG_PHASECAL_CONFIG__OVERRIDE, 0x01u)) {
-        return false;
-    }
-
-    if (!vl53l1x_read8(REG_PHASECAL_RESULT__VCSEL_START,
-                       &phasecal_vcsel_start)) {
-        return false;
-    }
-
-    if (!vl53l1x_write8(REG_CAL_CONFIG__VCSEL_START,
-                        phasecal_vcsel_start)) {
-        return false;
-    }
-
-    return true;
-}
-
-static bool vl53l1x_update_dss(const struct vl53l1x_results *r)
-{
-    uint16_t spad_count;
-
-    if (r == NULL) {
-        return false;
-    }
-
-    spad_count = r->dss_actual_effective_spads_sd0;
-
-    if (spad_count != 0u) {
-        uint32_t total_rate_per_spad =
-            (uint32_t)r->peak_signal_count_rate_crosstalk_corrected_mcps_sd0 +
-            r->ambient_count_rate_mcps_sd0;
-
-        if (total_rate_per_spad > 0xFFFFu) {
-            total_rate_per_spad = 0xFFFFu;
+    while (max_polls-- != 0u) {
+        if (!tof4m_data_ready(&ready)) {
+            return false;
         }
 
-        total_rate_per_spad =
-            vl53l1x_divmod_u32_soft(total_rate_per_spad << 16,
-                                    spad_count,
-                                    NULL);
-
-        if (total_rate_per_spad != 0u) {
-            uint32_t required_spads =
-                vl53l1x_divmod_u32_soft(((uint32_t)VL53L1X_TARGET_RATE << 16),
-                                        total_rate_per_spad,
-                                        NULL);
-
-            if (required_spads > 0xFFFFu) {
-                required_spads = 0xFFFFu;
-            }
-
-            return vl53l1x_write16(
-                REG_DSS_CONFIG__MANUAL_EFFECTIVE_SPADS_SELECT,
-                (uint16_t)required_spads);
+        if (ready) {
+            return true;
         }
     }
 
-    return vl53l1x_write16(REG_DSS_CONFIG__MANUAL_EFFECTIVE_SPADS_SELECT,
-                           0x8000u);
+    if (timed_out != NULL) {
+        *timed_out = true;
+    }
+
+    return true;
 }
 
+static bool tof4m_write_default_config(void)
+{
+    uint8_t cfg[TOF4M_DEFAULT_CFG_LEN];
 
-/* ------------------------------------------------------------------------- */
-/* Public API                                                                */
-/* ------------------------------------------------------------------------- */
+    tof4m_build_default_cfg(cfg);
+
+    /*
+     * Write byte-by-byte to match the working SV transaction stream exactly.
+     */
+    for (uint16_t i = 0u; i < TOF4M_DEFAULT_CFG_LEN; ++i) {
+        if (!tof4m_write8((uint16_t)(REG_DEFAULT_CONFIG_BASE + i), cfg[i])) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static bool tof4m_read_result(tof4m_result_t *result)
+{
+    uint8_t buf[TOF4M_RESULT_BUF_LEN];
+    uint16_t direct_range = 0u;
+
+    if (result == NULL) {
+        return false;
+    }
+
+    result->range_status = 0xFFu;
+    result->stream_count = 0u;
+    result->range_mm = 0u;
+
+    /*
+     * Read the normal result block beginning at 0x0089.
+     *
+     * Offsets:
+     *   0  = range status
+     *   2  = stream count
+     *   13 = range high byte, register 0x0096
+     *   14 = range low byte,  register 0x0097
+     */
+    if (tof4m_read_multi(REG_RESULT__RANGE_STATUS,
+                         buf,
+                         TOF4M_RESULT_BUF_LEN)) {
+        result->range_status = buf[0];
+        result->stream_count = buf[2];
+        result->range_mm = ((uint16_t)buf[13] << 8) | buf[14];
+    } else {
+        return false;
+    }
+
+    /*
+     * Safety fallback: if the block read reports zero, try the exact register
+     * used by your SV module.
+     */
+    if (result->range_mm == 0u) {
+        if (!tof4m_read16(REG_RESULT__FINAL_CROSSTALK_CORRECTED_RANGE_MM_SD0,
+                          &direct_range)) {
+            return false;
+        }
+
+        if (direct_range != 0u) {
+            result->range_mm = direct_range;
+        }
+    }
+
+    return true;
+}
+
+static bool tof4m_try_discard_first_measurement(void)
+{
+    bool timed_out = false;
+    tof4m_result_t result;
+
+    if (!tof4m_wait_data_ready(TOF4M_STATUS_POLL_LIMIT, &timed_out)) {
+        return false;
+    }
+
+    if (timed_out) {
+        return true;
+    }
+
+    if (!tof4m_read_result(&result)) {
+        return false;
+    }
+
+    return tof4m_clear_interrupt();
+}
+
+bool vl53l1x_start(void)
+{
+    /*
+     * Clear before start so a stale latched interrupt does not cause the first
+     * host poll to read an old zero result.
+     */
+    if (!tof4m_clear_interrupt()) {
+        return false;
+    }
+
+    return tof4m_write8(REG_SYSTEM__MODE_START,
+                        TOF4M_START_RANGING_BACK_TO_BACK);
+}
+
+bool vl53l1x_stop(void)
+{
+    return tof4m_write8(REG_SYSTEM__MODE_START, TOF4M_STOP_RANGING);
+}
 
 bool vl53l1x_init(void)
 {
-    uint8_t tmp8;
-    uint16_t tmp16;
+    uint16_t model_id = 0u;
 
-    calibrated = false;
-    saved_vhv_init = 0u;
-    saved_vhv_timeout = 0u;
-    fast_osc_frequency = 0u;
-    osc_calibrate_val = 0u;
-
-    if (!vl53l1x_read16(REG_IDENTIFICATION__MODEL_ID, &tmp16)) {
+    /*
+     * Match your working SV order:
+     *   boot first, then model ID.
+     */
+    if (!tof4m_wait_boot()) {
         return false;
     }
 
-    if (tmp16 != 0xEACCu) {
+    if (!tof4m_read16(REG_IDENTIFICATION__MODEL_ID, &model_id)) {
         return false;
     }
 
-    if (!vl53l1x_write8(REG_SOFT_RESET, 0x00u)) {
+    /*
+     * Your HDL accepts both.
+     */
+    if ((model_id != 0xEACCu) && (model_id != 0xEBAAu)) {
         return false;
     }
 
-    VL53L1X_DELAY_US(100u);
-
-    if (!vl53l1x_write8(REG_SOFT_RESET, 0x01u)) {
+    if (!tof4m_write_default_config()) {
         return false;
     }
 
-    VL53L1X_DELAY_US(1000u);
-
-    if (!vl53l1x_wait_boot()) {
-        return false;
-    }
-
-#if VL53L1X_USE_2V8
-    if (!vl53l1x_read8(REG_PAD_I2C_HV__EXTSUP_CONFIG, &tmp8)) {
-        return false;
-    }
-
-    if (!vl53l1x_write8(REG_PAD_I2C_HV__EXTSUP_CONFIG,
-                        (uint8_t)(tmp8 | 0x01u))) {
+#if defined(VL53L1X_USE_2V8) && VL53L1X_USE_2V8
+    if (!tof4m_write8(REG_PAD_I2C_HV__EXTSUP_CONFIG, 0x01u)) {
         return false;
     }
 #endif
 
-    if (!vl53l1x_read16(REG_OSC_MEASURED__FAST_OSC__FREQUENCY,
-                        &fast_osc_frequency)) {
+    /*
+     * SensorInit-style sequence matching your SV:
+     *
+     *   MODE_START = 0x40
+     *   INTERRUPT_CLEAR = 0x01
+     *   MODE_START = 0x00
+     *
+     * Do not wait for data-ready here. Your working SV does not wait here.
+     */
+    if (!tof4m_write8(REG_SYSTEM__MODE_START,
+                      TOF4M_START_RANGING_BACK_TO_BACK)) {
         return false;
     }
 
-    if (!vl53l1x_read16(REG_RESULT__OSC_CALIBRATE_VAL,
-                        &osc_calibrate_val)) {
+    if (!tof4m_clear_interrupt()) {
         return false;
     }
 
-    if ((fast_osc_frequency == 0u) || (osc_calibrate_val == 0u)) {
+    if (!tof4m_write8(REG_SYSTEM__MODE_START, TOF4M_STOP_RANGING)) {
         return false;
     }
 
-    if (!vl53l1x_write16(REG_DSS_CONFIG__TARGET_TOTAL_RATE_MCPS,
-                         VL53L1X_TARGET_RATE)) {
+    /*
+     * Post-init tweaks from your SV.
+     */
+    if (!tof4m_write8(REG_VHV_CONFIG__TIMEOUT_MACROP_LOOP_BOUND, 0x09u)) {
         return false;
     }
 
-    if (!vl53l1x_write8(REG_GPIO__TIO_HV_STATUS, 0x02u)) {
+    if (!tof4m_write8(REG_VHV_CONFIG__INIT, 0x00u)) {
         return false;
     }
 
-    if (!vl53l1x_write8(REG_SIGMA_ESTIMATOR__EFFECTIVE_PULSE_WIDTH_NS, 8u)) {
+    /*
+     * Final continuous start.
+     */
+    if (!vl53l1x_start()) {
         return false;
     }
 
-    if (!vl53l1x_write8(REG_SIGMA_ESTIMATOR__EFFECTIVE_AMBIENT_WIDTH_NS, 16u)) {
-        return false;
-    }
-
-    if (!vl53l1x_write8(REG_ALGO__CROSSTALK_COMPENSATION_VALID_HEIGHT_MM,
-                        0x01u)) {
-        return false;
-    }
-
-    if (!vl53l1x_write8(REG_ALGO__RANGE_IGNORE_VALID_HEIGHT_MM, 0xFFu)) {
-        return false;
-    }
-
-    if (!vl53l1x_write8(REG_ALGO__RANGE_MIN_CLIP, 0u)) {
-        return false;
-    }
-
-    if (!vl53l1x_write8(REG_ALGO__CONSISTENCY_CHECK__TOLERANCE, 2u)) {
-        return false;
-    }
-
-    if (!vl53l1x_write16(REG_SYSTEM__THRESH_RATE_HIGH, 0x0000u)) {
-        return false;
-    }
-
-    if (!vl53l1x_write16(REG_SYSTEM__THRESH_RATE_LOW, 0x0000u)) {
-        return false;
-    }
-
-    if (!vl53l1x_write8(REG_DSS_CONFIG__APERTURE_ATTENUATION, 0x38u)) {
-        return false;
-    }
-
-    if (!vl53l1x_write16(REG_RANGE_CONFIG__SIGMA_THRESH, 360u)) {
-        return false;
-    }
-
-    if (!vl53l1x_write16(REG_RANGE_CONFIG__MIN_COUNT_RATE_RTN_LIMIT_MCPS,
-                         192u)) {
-        return false;
-    }
-
-    if (!vl53l1x_write8(REG_SYSTEM__GROUPED_PARAMETER_HOLD_0, 0x01u)) {
-        return false;
-    }
-
-    if (!vl53l1x_write8(REG_SYSTEM__GROUPED_PARAMETER_HOLD_1, 0x01u)) {
-        return false;
-    }
-
-    if (!vl53l1x_write8(REG_SD_CONFIG__QUANTIFIER, 2u)) {
-        return false;
-    }
-
-    if (!vl53l1x_write8(REG_SYSTEM__GROUPED_PARAMETER_HOLD, 0x00u)) {
-        return false;
-    }
-
-    if (!vl53l1x_write8(REG_SYSTEM__SEED_CONFIG, 1u)) {
-        return false;
-    }
-
-    if (!vl53l1x_write8(REG_SYSTEM__SEQUENCE_CONFIG, 0x8Bu)) {
-        return false;
-    }
-
-    if (!vl53l1x_write16(REG_DSS_CONFIG__MANUAL_EFFECTIVE_SPADS_SELECT,
-                         (uint16_t)(200u << 8))) {
-        return false;
-    }
-
-    if (!vl53l1x_write8(REG_DSS_CONFIG__ROI_MODE_CONTROL, 2u)) {
-        return false;
-    }
-
-    if (!vl53l1x_set_long_distance_mode()) {
-        return false;
-    }
-
-    if (!vl53l1x_read16(REG_MM_CONFIG__OUTER_OFFSET_MM, &tmp16)) {
-        return false;
-    }
-
-    if (!vl53l1x_write16(REG_ALGO__PART_TO_PART_RANGE_OFFSET_MM,
-                         (uint16_t)((uint32_t)tmp16 << 2))) {
-        return false;
-    }
-
-    if (!vl53l1x_write32(
-            REG_SYSTEM__INTERMEASUREMENT_PERIOD,
-            vl53l1x_mul_u32_soft((uint32_t)VL53L1X_INTERMEASUREMENT_MS,
-                                 (uint32_t)osc_calibrate_val))) {
-        return false;
-    }
-
-    if (!vl53l1x_write8(REG_SYSTEM__INTERRUPT_CLEAR, 0x01u)) {
-        return false;
-    }
-
-    if (!vl53l1x_write8(REG_SYSTEM__MODE_START, 0x40u)) {
+    /*
+     * The original code discarded the first post-start sample using a global
+     * flag. Do that eagerly here instead so no persistent RAM state is needed.
+     */
+    if (!tof4m_try_discard_first_measurement()) {
         return false;
     }
 
@@ -806,56 +732,64 @@ bool vl53l1x_init(void)
 
 vl53l1x_poll_result_t vl53l1x_poll(uint16_t *range_mm)
 {
-    bool ready;
-    struct vl53l1x_results r;
-    uint32_t corrected_range;
+    return vl53l1x_poll_ex(range_mm, NULL, NULL);
+}
+
+vl53l1x_poll_result_t vl53l1x_poll_ex(uint16_t *range_mm,
+                                      uint8_t *raw_status,
+                                      uint16_t *raw_range)
+{
+    bool timed_out = false;
+    tof4m_result_t result;
 
     if (range_mm == NULL) {
         return VL53L1X_POLL_ERROR;
     }
 
-    if (!vl53l1x_data_ready(&ready)) {
+    /*
+     * Match your SV sample path:
+     * poll GPIO status internally before reading the range.
+     */
+    if (!tof4m_wait_data_ready(TOF4M_STATUS_POLL_LIMIT, &timed_out)) {
         return VL53L1X_POLL_ERROR;
     }
 
-    if (!ready) {
+    if (timed_out) {
         return VL53L1X_POLL_NONE;
     }
 
-    if (!vl53l1x_read_results(&r)) {
+    if (!tof4m_read_result(&result)) {
         return VL53L1X_POLL_ERROR;
     }
 
-    if (!calibrated) {
-        if (!vl53l1x_setup_manual_calibration()) {
-            return VL53L1X_POLL_ERROR;
-        }
-
-        calibrated = true;
+    if (raw_status != NULL) {
+        *raw_status = result.range_status;
     }
 
-    if (!vl53l1x_update_dss(&r)) {
+    if (raw_range != NULL) {
+        *raw_range = result.range_mm;
+    }
+
+    if (!tof4m_clear_interrupt()) {
         return VL53L1X_POLL_ERROR;
     }
 
-    corrected_range = vl53l1x_mul_u32_2011(
-                          (uint32_t)r.final_crosstalk_corrected_range_mm_sd0)
-                      + 0x0400u;
-    corrected_range >>= 11;
-
-    if (corrected_range > 0xFFFFu) {
-        corrected_range = 0xFFFFu;
+    /*
+     * Status 18 is the common sync/first-stream interrupt.
+     */
+    if (result.range_status == 18u) {
+        return VL53L1X_POLL_NONE;
     }
 
-    *range_mm = (uint16_t)corrected_range;
-
-    if (!vl53l1x_write8(REG_SYSTEM__INTERRUPT_CLEAR, 0x01u)) {
-        return VL53L1X_POLL_ERROR;
+    /*
+     * ToF4M minimum useful range is around 40 mm, so zero is not useful data.
+     * Returning INVALID here makes the example display F0ss instead of
+     * silently showing a bogus zero.
+     */
+    if (result.range_mm == 0u) {
+        return VL53L1X_POLL_INVALID;
     }
 
-    if (r.range_status == VL53L1X_RANGE_STATUS_COMPLETE) {
-        return VL53L1X_POLL_OK;
-    }
-
-    return VL53L1X_POLL_INVALID;
+    *range_mm = result.range_mm;
+    return VL53L1X_POLL_OK;
 }
