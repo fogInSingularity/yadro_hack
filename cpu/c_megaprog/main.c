@@ -131,12 +131,13 @@ int main(void)
 
     rover_high_go_straight(&high);
 
+    bool sensor_needed = true;
     while (1) {
         sleep_ms(15u);
         r = vl53l1x_poll(&distance_mm);
         sleep_ms(15u);
 
-        if (r == VL53L1X_POLL_ERROR) {
+        if (r == VL53L1X_POLL_ERROR && sensor_needed) {
             /*
              * Re-initialize only the ToF4M sensor and preserve the current
              * state machine state and debounce counters.
@@ -160,6 +161,7 @@ int main(void)
                         close_count = 0u;
                         open_count = 0u;
 
+                        sensor_needed = false;
                         rover_high_stop(&high);
                         sleep_transition();
 
