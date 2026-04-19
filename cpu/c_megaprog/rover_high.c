@@ -1,13 +1,15 @@
 #include "rover_high.h"
 
-#define ROVER_HIGH_DEFAULT_STRAIGHT_LEFT_SPEED    70
-#define ROVER_HIGH_DEFAULT_STRAIGHT_RIGHT_SPEED   70
+#define ROVER_HIGH_DEFAULT_STRAIGHT_LEFT_SPEED     70
+#define ROVER_HIGH_DEFAULT_STRAIGHT_RIGHT_SPEED    70
 
-#define ROVER_HIGH_DEFAULT_TURN_RIGHT_LEFT_SPEED   75
+#define ROVER_HIGH_DEFAULT_TURN_RIGHT_LEFT_SPEED    75
 #define ROVER_HIGH_DEFAULT_TURN_RIGHT_RIGHT_SPEED (-75)
 
 #define ROVER_HIGH_DEFAULT_TURN_LEFT_LEFT_SPEED   (-75)
-#define ROVER_HIGH_DEFAULT_TURN_LEFT_RIGHT_SPEED   75
+#define ROVER_HIGH_DEFAULT_TURN_LEFT_RIGHT_SPEED    75
+
+#define ROVER_HIGH_DEFAULT_STRAFE_LEFT_SPEED        70
 
 static bool rover_high_valid_motor(rover_motor_t motor)
 {
@@ -56,6 +58,7 @@ static int8_t rover_high_apply_invert(int8_t speed, bool invert)
     return speed;
 }
 
+/* Existing differential/tank-style drive */
 static bool rover_high_drive(rover_high_t* high,
                              int16_t left_speed,
                              int16_t right_speed)
@@ -123,6 +126,76 @@ static bool rover_high_drive(rover_high_t* high,
     return rover_set_motors(high->rover, motor1, motor2, motor3, motor4);
 }
 
+/* NEW: direct 4-wheel drive for mecanum strafing */
+static bool rover_high_drive_4(rover_high_t* high,
+                               int16_t fl_speed,
+                               int16_t rl_speed,
+                               int16_t fr_speed,
+                               int16_t rr_speed)
+{
+    int8_t fl;
+    int8_t rl;
+    int8_t fr;
+    int8_t rr;
+
+    int16_t motor1 = 0;
+    int16_t motor2 = 0;
+    int16_t motor3 = 0;
+    int16_t motor4 = 0;
+
+    if ((high == NULL) || (high->rover == NULL)) {
+        return false;
+    }
+
+    if (!rover_high_valid_map(&high->cfg)) {
+        return false;
+    }
+
+    fl = rover_high_fix_speed(fl_speed);
+    rl = rover_high_fix_speed(rl_speed);
+    fr = rover_high_fix_speed(fr_speed);
+    rr = rover_high_fix_speed(rr_speed);
+
+    fl = rover_high_apply_invert(fl, high->cfg.invert_front_left);
+    rl = rover_high_apply_invert(rl, high->cfg.invert_rear_left);
+    fr = rover_high_apply_invert(fr, high->cfg.invert_front_right);
+    rr = rover_high_apply_invert(rr, high->cfg.invert_rear_right);
+
+    switch (high->cfg.front_left_motor) {
+        case ROVER_MOTOR_1: motor1 = fl; break;
+        case ROVER_MOTOR_2: motor2 = fl; break;
+        case ROVER_MOTOR_3: motor3 = fl; break;
+        case ROVER_MOTOR_4: motor4 = fl; break;
+        default: return false;
+    }
+
+    switch (high->cfg.rear_left_motor) {
+        case ROVER_MOTOR_1: motor1 = rl; break;
+        case ROVER_MOTOR_2: motor2 = rl; break;
+        case ROVER_MOTOR_3: motor3 = rl; break;
+        case ROVER_MOTOR_4: motor4 = rl; break;
+        default: return false;
+    }
+
+    switch (high->cfg.front_right_motor) {
+        case ROVER_MOTOR_1: motor1 = fr; break;
+        case ROVER_MOTOR_2: motor2 = fr; break;
+        case ROVER_MOTOR_3: motor3 = fr; break;
+        case ROVER_MOTOR_4: motor4 = fr; break;
+        default: return false;
+    }
+
+    switch (high->cfg.rear_right_motor) {
+        case ROVER_MOTOR_1: motor1 = rr; break;
+        case ROVER_MOTOR_2: motor2 = rr; break;
+        case ROVER_MOTOR_3: motor3 = rr; break;
+        case ROVER_MOTOR_4: motor4 = rr; break;
+        default: return false;
+    }
+
+    return rover_set_motors(high->rover, motor1, motor2, motor3, motor4);
+}
+
 void rover_high_default_config(rover_high_config_t* cfg)
 {
     if (cfg == NULL) {
@@ -147,6 +220,8 @@ void rover_high_default_config(rover_high_config_t* cfg)
 
     cfg->turn_left_left_speed  = ROVER_HIGH_DEFAULT_TURN_LEFT_LEFT_SPEED;
     cfg->turn_left_right_speed = ROVER_HIGH_DEFAULT_TURN_LEFT_RIGHT_SPEED;
+
+    cfg->strafe_left_speed = ROVER_HIGH_DEFAULT_STRAFE_LEFT_SPEED;
 }
 
 bool rover_high_init(rover_high_t* high,
@@ -201,6 +276,24 @@ bool rover_high_turn_left(rover_high_t* high)
                             high->cfg.turn_left_right_speed);
 }
 
+/* NEW: pure sideways-left strafe */
+bool rover_high_go_left(rover_high_t* high)
+{
+    int16_t s;
+
+    if (high == NULL) {
+        return false;
+    }
+
+    s = high->cfg.strafe_left_speed;
+
+    return rover_high_drive_4(high,
+                              -s,  /* front-left  */
+                               s,  /* rear-left   */
+                               s,  /* front-right */
+                              -s); /* rear-right  */
+}
+
 bool rover_high_stop(rover_high_t* high)
 {
     if ((high == NULL) || (high->rover == NULL)) {
@@ -244,6 +337,16 @@ void rover_high_set_turn_left(rover_high_t* high,
 
     high->cfg.turn_left_left_speed = rover_high_fix_speed(left_speed);
     high->cfg.turn_left_right_speed = rover_high_fix_speed(right_speed);
+}
+
+void rover_high_set_strafe_left(rover_high_t* high,
+                                int16_t speed)
+{
+    if (high == NULL) {
+        return;
+    }
+
+    high->cfg.strafe_left_speed = rover_high_fix_speed(speed);
 }
 
 void rover_high_set_motor_map(rover_high_t* high,

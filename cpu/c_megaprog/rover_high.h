@@ -31,6 +31,9 @@ typedef struct {
     /* Left turn tuning */
     int8_t turn_left_left_speed;
     int8_t turn_left_right_speed;
+
+    /* Sideways left tuning */
+    int8_t strafe_left_speed;
 } rover_high_config_t;
 
 typedef struct {
@@ -50,6 +53,7 @@ bool rover_high_init(rover_high_t* high,
 bool rover_high_go_straight(rover_high_t* high);
 bool rover_high_turn_right(rover_high_t* high);
 bool rover_high_turn_left(rover_high_t* high);
+bool rover_high_go_left(rover_high_t* high);   /* NEW */
 bool rover_high_stop(rover_high_t* high);
 
 /* Knobs */
@@ -64,6 +68,9 @@ void rover_high_set_turn_right(rover_high_t* high,
 void rover_high_set_turn_left(rover_high_t* high,
                               int16_t left_speed,
                               int16_t right_speed);
+
+void rover_high_set_strafe_left(rover_high_t* high,  /* NEW */
+                                int16_t speed);
 
 /* Setup helpers */
 void rover_high_set_motor_map(rover_high_t* high,
