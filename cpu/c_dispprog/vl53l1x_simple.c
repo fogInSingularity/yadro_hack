@@ -9,6 +9,10 @@
  * The public names still say vl53l1x because your main.c already uses them.
  * Internally this is written to match your working SystemVerilog transaction
  * sequence for the M5Stack ToF4M / VL53L1CX unit.
+ *
+ * This version avoids file-scope objects so the build does not need .bss,
+ * .data, or .rodata support. All persistent values are either in hardware,
+ * on the stack, or passed in by the caller.
  */
 
 #define TOF4M_KEEP_SYMBOL __attribute__((used, noinline, externally_visible))
@@ -232,6 +236,7 @@ static void tof4m_delay_us(uint32_t us)
 #define TOF4M_CLEAR_RANGE_INTERRUPT                         0x01u
 
 #define TOF4M_RESULT_BUF_LEN                                17u
+#define TOF4M_DEFAULT_CFG_LEN                               91u
 
 typedef struct {
     uint8_t  range_status;
@@ -239,26 +244,104 @@ typedef struct {
     uint16_t range_mm;
 } tof4m_result_t;
 
-/*
- * Same 0x002D..0x0087 block as your working SV module.
- */
-static const uint8_t tof4m_default_cfg[] = {
-    0x00, 0x00, 0x00, 0x01, 0x02, 0x00, 0x02, 0x08,
-    0x00, 0x08, 0x10, 0x01, 0x01, 0x00, 0x00, 0x00,
-    0x00, 0xFF, 0x00, 0x0F, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x20, 0x0B, 0x00, 0x00, 0x02, 0x0A, 0x21,
-    0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x00, 0xC8,
-    0x00, 0x00, 0x38, 0xFF, 0x01, 0x00, 0x08, 0x00,
-    0x00, 0x01, 0xCC, 0x0F, 0x01, 0xF1, 0x0D, 0x01,
-    0x68, 0x00, 0x80, 0x08, 0xB8, 0x00, 0x00, 0x00,
-    0x00, 0x0F, 0x89, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x01, 0x0F, 0x0D, 0x0E, 0x0E, 0x00,
-    0x00, 0x02, 0xC7, 0xFF, 0x9B, 0x00, 0x00, 0x00,
-    0x01, 0x00, 0x00
-};
+static void tof4m_build_default_cfg(uint8_t *cfg)
+{
+    if (cfg == NULL) {
+        return;
+    }
 
-static uint8_t tof4m_irq_ready_level = 1u;
-static bool tof4m_discard_next_range = false;
+    cfg[0] = 0x00u;
+    cfg[1] = 0x00u;
+    cfg[2] = 0x00u;
+    cfg[3] = 0x01u;
+    cfg[4] = 0x02u;
+    cfg[5] = 0x00u;
+    cfg[6] = 0x02u;
+    cfg[7] = 0x08u;
+    cfg[8] = 0x00u;
+    cfg[9] = 0x08u;
+    cfg[10] = 0x10u;
+    cfg[11] = 0x01u;
+    cfg[12] = 0x01u;
+    cfg[13] = 0x00u;
+    cfg[14] = 0x00u;
+    cfg[15] = 0x00u;
+    cfg[16] = 0x00u;
+    cfg[17] = 0xFFu;
+    cfg[18] = 0x00u;
+    cfg[19] = 0x0Fu;
+    cfg[20] = 0x00u;
+    cfg[21] = 0x00u;
+    cfg[22] = 0x00u;
+    cfg[23] = 0x00u;
+    cfg[24] = 0x00u;
+    cfg[25] = 0x20u;
+    cfg[26] = 0x0Bu;
+    cfg[27] = 0x00u;
+    cfg[28] = 0x00u;
+    cfg[29] = 0x02u;
+    cfg[30] = 0x0Au;
+    cfg[31] = 0x21u;
+    cfg[32] = 0x00u;
+    cfg[33] = 0x00u;
+    cfg[34] = 0x05u;
+    cfg[35] = 0x00u;
+    cfg[36] = 0x00u;
+    cfg[37] = 0x00u;
+    cfg[38] = 0x00u;
+    cfg[39] = 0xC8u;
+    cfg[40] = 0x00u;
+    cfg[41] = 0x00u;
+    cfg[42] = 0x38u;
+    cfg[43] = 0xFFu;
+    cfg[44] = 0x01u;
+    cfg[45] = 0x00u;
+    cfg[46] = 0x08u;
+    cfg[47] = 0x00u;
+    cfg[48] = 0x00u;
+    cfg[49] = 0x01u;
+    cfg[50] = 0xCCu;
+    cfg[51] = 0x0Fu;
+    cfg[52] = 0x01u;
+    cfg[53] = 0xF1u;
+    cfg[54] = 0x0Du;
+    cfg[55] = 0x01u;
+    cfg[56] = 0x68u;
+    cfg[57] = 0x00u;
+    cfg[58] = 0x80u;
+    cfg[59] = 0x08u;
+    cfg[60] = 0xB8u;
+    cfg[61] = 0x00u;
+    cfg[62] = 0x00u;
+    cfg[63] = 0x00u;
+    cfg[64] = 0x00u;
+    cfg[65] = 0x0Fu;
+    cfg[66] = 0x89u;
+    cfg[67] = 0x00u;
+    cfg[68] = 0x00u;
+    cfg[69] = 0x00u;
+    cfg[70] = 0x00u;
+    cfg[71] = 0x00u;
+    cfg[72] = 0x00u;
+    cfg[73] = 0x00u;
+    cfg[74] = 0x01u;
+    cfg[75] = 0x0Fu;
+    cfg[76] = 0x0Du;
+    cfg[77] = 0x0Eu;
+    cfg[78] = 0x0Eu;
+    cfg[79] = 0x00u;
+    cfg[80] = 0x00u;
+    cfg[81] = 0x02u;
+    cfg[82] = 0xC7u;
+    cfg[83] = 0xFFu;
+    cfg[84] = 0x9Bu;
+    cfg[85] = 0x00u;
+    cfg[86] = 0x00u;
+    cfg[87] = 0x00u;
+    cfg[88] = 0x01u;
+    cfg[89] = 0x00u;
+    cfg[90] = 0x00u;
+}
 
 static bool tof4m_write_multi(uint16_t reg, const uint8_t *data, uint8_t len)
 {
@@ -413,6 +496,7 @@ static bool tof4m_get_interrupt_ready_level(uint8_t *level)
 static bool tof4m_data_ready(bool *ready)
 {
     uint8_t gpio_status;
+    uint8_t irq_ready_level;
 
     if (ready == NULL) {
         return false;
@@ -422,7 +506,11 @@ static bool tof4m_data_ready(bool *ready)
         return false;
     }
 
-    *ready = ((gpio_status & 0x01u) == tof4m_irq_ready_level);
+    if (!tof4m_get_interrupt_ready_level(&irq_ready_level)) {
+        return false;
+    }
+
+    *ready = ((gpio_status & 0x01u) == irq_ready_level);
     return true;
 }
 
@@ -453,12 +541,15 @@ static bool tof4m_wait_data_ready(uint32_t max_polls, bool *timed_out)
 
 static bool tof4m_write_default_config(void)
 {
+    uint8_t cfg[TOF4M_DEFAULT_CFG_LEN];
+
+    tof4m_build_default_cfg(cfg);
+
     /*
      * Write byte-by-byte to match the working SV transaction stream exactly.
      */
-    for (uint16_t i = 0u; i < (uint16_t)sizeof(tof4m_default_cfg); ++i) {
-        if (!tof4m_write8((uint16_t)(REG_DEFAULT_CONFIG_BASE + i),
-                          tof4m_default_cfg[i])) {
+    for (uint16_t i = 0u; i < TOF4M_DEFAULT_CFG_LEN; ++i) {
+        if (!tof4m_write8((uint16_t)(REG_DEFAULT_CONFIG_BASE + i), cfg[i])) {
             return false;
         }
     }
@@ -516,6 +607,26 @@ static bool tof4m_read_result(tof4m_result_t *result)
     return true;
 }
 
+static bool tof4m_try_discard_first_measurement(void)
+{
+    bool timed_out = false;
+    tof4m_result_t result;
+
+    if (!tof4m_wait_data_ready(TOF4M_STATUS_POLL_LIMIT, &timed_out)) {
+        return false;
+    }
+
+    if (timed_out) {
+        return true;
+    }
+
+    if (!tof4m_read_result(&result)) {
+        return false;
+    }
+
+    return tof4m_clear_interrupt();
+}
+
 bool vl53l1x_start(void)
 {
     /*
@@ -538,11 +649,6 @@ bool vl53l1x_stop(void)
 bool vl53l1x_init(void)
 {
     uint16_t model_id = 0u;
-
-    tof4m_irq_ready_level = 1u;
-    tof4m_discard_next_range = false;
-    vl53l1x_last_raw_status = 0xFFu;
-    vl53l1x_last_raw_range = 0u;
 
     /*
      * Match your working SV order:
@@ -572,10 +678,6 @@ bool vl53l1x_init(void)
         return false;
     }
 #endif
-
-    if (!tof4m_get_interrupt_ready_level(&tof4m_irq_ready_level)) {
-        return false;
-    }
 
     /*
      * SensorInit-style sequence matching your SV:
@@ -618,192 +720,76 @@ bool vl53l1x_init(void)
     }
 
     /*
-     * Your SV discards the first sample after final start.
+     * The original code discarded the first post-start sample using a global
+     * flag. Do that eagerly here instead so no persistent RAM state is needed.
      */
-    tof4m_discard_next_range = true;
+    if (!tof4m_try_discard_first_measurement()) {
+        return false;
+    }
 
     return true;
-}
-
-#define REG_GPIO__TIO_HV_STATUS                             0x0031u
-#define REG_GPIO_HV_MUX__CTRL                               0x0030u
-#define REG_SYSTEM__INTERRUPT_CLEAR                         0x0086u
-#define REG_RESULT__RANGE_STATUS                            0x0089u
-#define REG_RESULT__FINAL_CROSSTALK_CORRECTED_RANGE_MM_SD0 0x0096u
-
-#define VL53L1X_RESULT_BLOCK_LEN 17u
-
-static uint8_t vl53l1x_irq_ready_level = 1u;
-static bool vl53l1x_discard_next_range = false;
-
-volatile uint8_t  vl53l1x_last_raw_status = 0xFFu;
-volatile uint16_t vl53l1x_last_raw_range  = 0u;
-volatile uint8_t  vl53l1x_last_result_block[17] = {0};
-
-static bool vl53l1x_read_multi(uint16_t reg, uint8_t *data, uint8_t len)
-{
-    if ((data == NULL) || (len == 0u)) {
-        return false;
-    }
-
-    if (!i2c_start()) {
-        return false;
-    }
-
-    if (!i2c_write_byte((uint8_t)((VL53L1X_ADDR << 1) | 0u))) {
-        (void)i2c_stop();
-        return false;
-    }
-
-    if (!i2c_write_byte((uint8_t)(reg >> 8))) {
-        (void)i2c_stop();
-        return false;
-    }
-
-    if (!i2c_write_byte((uint8_t)reg)) {
-        (void)i2c_stop();
-        return false;
-    }
-
-    if (!i2c_restart()) {
-        (void)i2c_stop();
-        return false;
-    }
-
-    if (!i2c_write_byte((uint8_t)((VL53L1X_ADDR << 1) | 1u))) {
-        (void)i2c_stop();
-        return false;
-    }
-
-    for (uint8_t i = 0; i < len; i++) {
-        bool send_nack = (i == (uint8_t)(len - 1u));
-
-        if (!i2c_read_byte(&data[i], send_nack)) {
-            (void)i2c_stop();
-            return false;
-        }
-    }
-
-    return i2c_stop();
-}
-
-static bool vl53l1x_read8(uint16_t reg, uint8_t *value)
-{
-    return vl53l1x_read_multi(reg, value, 1u);
-}
-
-static bool vl53l1x_write8(uint16_t reg, uint8_t value)
-{
-    if (!i2c_start()) {
-        return false;
-    }
-
-    if (!i2c_write_byte((uint8_t)((VL53L1X_ADDR << 1) | 0u))) {
-        (void)i2c_stop();
-        return false;
-    }
-
-    if (!i2c_write_byte((uint8_t)(reg >> 8))) {
-        (void)i2c_stop();
-        return false;
-    }
-
-    if (!i2c_write_byte((uint8_t)reg)) {
-        (void)i2c_stop();
-        return false;
-    }
-
-    if (!i2c_write_byte(value)) {
-        (void)i2c_stop();
-        return false;
-    }
-
-    return i2c_stop();
-}
-
-static bool vl53l1x_data_ready(bool *ready)
-{
-    uint8_t gpio_status;
-
-    if (ready == NULL) {
-        return false;
-    }
-
-    if (!vl53l1x_read8(REG_GPIO__TIO_HV_STATUS, &gpio_status)) {
-        return false;
-    }
-
-    *ready = ((gpio_status & 0x01u) == vl53l1x_irq_ready_level);
-    return true;
-}
-
-/* call this from your init after reading GPIO_HV_MUX__CTRL */
-bool vl53l1x_debug_set_irq_ready_level_from_sensor(void)
-{
-    uint8_t mux;
-
-    if (!vl53l1x_read8(REG_GPIO_HV_MUX__CTRL, &mux)) {
-        return false;
-    }
-
-    vl53l1x_irq_ready_level = (uint8_t)(!((mux >> 4) & 0x01u));
-    return true;
-}
-
-/* call this from your init after final start */
-void vl53l1x_debug_discard_first_sample(void)
-{
-    vl53l1x_discard_next_range = true;
 }
 
 vl53l1x_poll_result_t vl53l1x_poll(uint16_t *range_mm)
 {
-    bool ready;
-    uint8_t buf[VL53L1X_RESULT_BLOCK_LEN];
-    uint16_t range;
+    return vl53l1x_poll_ex(range_mm, NULL, NULL);
+}
+
+vl53l1x_poll_result_t vl53l1x_poll_ex(uint16_t *range_mm,
+                                      uint8_t *raw_status,
+                                      uint16_t *raw_range)
+{
+    bool timed_out = false;
+    tof4m_result_t result;
 
     if (range_mm == NULL) {
         return VL53L1X_POLL_ERROR;
     }
 
-    if (!vl53l1x_data_ready(&ready)) {
+    /*
+     * Match your SV sample path:
+     * poll GPIO status internally before reading the range.
+     */
+    if (!tof4m_wait_data_ready(TOF4M_STATUS_POLL_LIMIT, &timed_out)) {
         return VL53L1X_POLL_ERROR;
     }
 
-    if (!ready) {
+    if (timed_out) {
         return VL53L1X_POLL_NONE;
     }
 
-    if (!vl53l1x_read_multi(REG_RESULT__RANGE_STATUS,
-                            buf,
-                            VL53L1X_RESULT_BLOCK_LEN)) {
+    if (!tof4m_read_result(&result)) {
         return VL53L1X_POLL_ERROR;
     }
 
-    for (uint8_t i = 0; i < VL53L1X_RESULT_BLOCK_LEN; ++i) {
-        vl53l1x_last_result_block[i] = buf[i];
+    if (raw_status != NULL) {
+        *raw_status = result.range_status;
     }
 
-    vl53l1x_last_raw_status = buf[0];
+    if (raw_range != NULL) {
+        *raw_range = result.range_mm;
+    }
 
-    /* 0x0096/0x0097 are bytes 13/14 of the 17-byte block starting at 0x0089 */
-    range = ((uint16_t)buf[13] << 8) | buf[14];
-    vl53l1x_last_raw_range = range;
-
-    if (!vl53l1x_write8(REG_SYSTEM__INTERRUPT_CLEAR, 0x01u)) {
+    if (!tof4m_clear_interrupt()) {
         return VL53L1X_POLL_ERROR;
     }
 
-    if (vl53l1x_discard_next_range || (buf[0] == 18u)) {
-        vl53l1x_discard_next_range = false;
+    /*
+     * Status 18 is the common sync/first-stream interrupt.
+     */
+    if (result.range_status == 18u) {
         return VL53L1X_POLL_NONE;
     }
 
-    *range_mm = range;
-
-    if (range == 0u) {
+    /*
+     * ToF4M minimum useful range is around 40 mm, so zero is not useful data.
+     * Returning INVALID here makes the example display F0ss instead of
+     * silently showing a bogus zero.
+     */
+    if (result.range_mm == 0u) {
         return VL53L1X_POLL_INVALID;
     }
 
+    *range_mm = result.range_mm;
     return VL53L1X_POLL_OK;
 }
