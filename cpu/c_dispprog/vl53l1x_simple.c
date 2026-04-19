@@ -786,6 +786,9 @@ bool vl53l1x_init(void)
     return true;
 }
 
+volatile uint8_t  vl53l1x_last_raw_status = 0xFF;
+volatile uint16_t vl53l1x_last_raw_range  = 0;
+
 vl53l1x_poll_result_t vl53l1x_poll(uint16_t *range_mm)
 {
     bool ready;
@@ -813,18 +816,23 @@ vl53l1x_poll_result_t vl53l1x_poll(uint16_t *range_mm)
         return VL53L1X_POLL_ERROR;
     }
 
+    vl53l1x_last_raw_status = raw_status;
+    vl53l1x_last_raw_range  = range;
+
     if (!vl53l1x_write8(REG_SYSTEM__INTERRUPT_CLEAR, 0x01u)) {
         return VL53L1X_POLL_ERROR;
     }
 
-    if (vl53l1x_discard_next_range) {
+    /* First sample after start is commonly garbage / sync interrupt. */
+    if (vl53l1x_discard_next_range || raw_status == 18u) {
         vl53l1x_discard_next_range = false;
         return VL53L1X_POLL_NONE;
     }
 
     *range_mm = range;
 
-    if (raw_status == VL53L1X_RAW_RANGE_STATUS_GOOD) {
+    /* Hackathon-friendly policy: accept valid and min-clipped readings. */
+    if (raw_status == 9u || raw_status == 8u) {
         return VL53L1X_POLL_OK;
     }
 
