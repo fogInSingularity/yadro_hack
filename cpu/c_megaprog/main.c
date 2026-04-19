@@ -87,8 +87,8 @@ int main(void)
     /* Fix wheel direction if needed */
     cfg.invert_front_left  = false;
     cfg.invert_rear_left   = false;
-    cfg.invert_front_right = true;
-    cfg.invert_rear_right  = true;
+    cfg.invert_front_right = false;
+    cfg.invert_rear_right  = false;
 
     /* Straight */
     cfg.straight_left_speed  = 127;
