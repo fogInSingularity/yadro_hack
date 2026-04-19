@@ -58,7 +58,7 @@ $(OUT_DIR)/$(PROG_NAME).out: $(OUT_DIR)/loader.o $(C_OBJS)
 
 .PHONY: disasm
 disasm: $(OUT_DIR)/$(PROG_NAME).out
-	$(OBJDUMP) -d --visualize-jumps -M no-aliases $@ | tee $(OUT_DIR)/$(PROG_NAME).dis
+	$(OBJDUMP) -d --visualize-jumps -M no-aliases $^ | tee $(OUT_DIR)/$(PROG_NAME).dis
 
 .PHONY: build_prog
 build_prog: clean_out $(OUT_DIR)/$(PROG_NAME).txt $(OUT_DIR)/$(PROG_NAME).mif
