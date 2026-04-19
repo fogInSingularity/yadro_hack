@@ -35,7 +35,7 @@ static void sleep_ms(uint32_t ms)
 #define OPEN_DEBOUNCE_SAMPLES  2u
 
 /* Set to 0u to remove debug pauses */
-#define DEBUG_TRANSITION_MS 50u
+#define DEBUG_TRANSITION_MS 400u
 
 static void sleep_transition(void)
 {
