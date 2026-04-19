@@ -7,6 +7,16 @@
 
 #define disp ((uint16_t*)0x20)
 
+#define LOOPS_PER_MS 50000u
+void sleep_ms(uint32_t ms)
+{
+    for (uint32_t m = 0u; m < ms; ++m) {
+        for (volatile uint32_t i = 0u; i < LOOPS_PER_MS; ++i) {
+            __asm__ volatile ("" ::: "memory");
+        }
+    }
+}
+
 /* ---------- Tunable knobs ---------- */
 
 /* Opening detected when distance >= this */
@@ -100,6 +110,8 @@ int main(void)
     while (1) {
         vl53l1x_poll_result_t r = vl53l1x_poll(&distance_mm);
         volatile robot_state_t current_state;
+
+        sleep_ms(15);
 
         if (r == VL53L1X_POLL_ERROR) {
             rover_high_stop(&high);
