@@ -9,7 +9,7 @@ OBJCOPY := $(RISCV_PREFIX)objcopy
 OBJDUMP := $(RISCV_PREFIX)objdump
 READELF := $(RISCV_PREFIX)readelf
 
-PROGS_DIR      := $(TASK_DIR)/c_megaprog
+PROGS_DIR      := $(TASK_DIR)/c_superprog
 OUT_DIR        := $(TASK_DIR)/out_prog
 ASM_COMMON_DIR := $(TASK_DIR)/asm_common
 SCRIPTS_DIR    := $(TASK_DIR)/scripts
