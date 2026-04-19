@@ -15,3 +15,4 @@ out_prog
 !*.ppf
 !*.v
 !**/quartus_files/ip
+!**/quartus_files/conv_sof2jic.cof

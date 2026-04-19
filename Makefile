@@ -99,6 +99,11 @@ quartus_drc:
 quartus_pgm:
 	cd $(QUARTUS_FILES_DIR) && quartus_pgm -c "USB-Blaster" -m JTAG -o "p;output/fpga.sof"
 
+.PHONY: quartus_pgm_jic
+quartus_pgm_jic:
+	cd $(QUARTUS_FILES_DIR) && quartus_cpf -c conv_sof2jic.cof
+	cd $(QUARTUS_FILES_DIR) && quartus_pgm -c "USB-Blaster" -m JTAG -o "ipv;output/fpga.jic"
+
 # WAVEFORMS
 
 .PHONY: show_waves
