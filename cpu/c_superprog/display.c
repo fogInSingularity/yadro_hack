@@ -15,11 +15,11 @@ void sleep_ms(uint32_t ms)
 
 int main(void)
 {
-    uint16_t i = 0x1234;
+    uint16_t i = 0x0000;
 
     while (1) {
         *disp = i++;
-        sleep_ms(50);
+        sleep_ms(1000);
     }
 }
 
