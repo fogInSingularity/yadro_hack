@@ -260,9 +260,6 @@ static const uint8_t tof4m_default_cfg[] = {
 static uint8_t tof4m_irq_ready_level = 1u;
 static bool tof4m_discard_next_range = false;
 
-volatile uint8_t  vl53l1x_last_raw_status = 0xFFu;
-volatile uint16_t vl53l1x_last_raw_range  = 0u;
-
 static bool tof4m_write_multi(uint16_t reg, const uint8_t *data, uint8_t len)
 {
     if ((data == NULL) || (len == 0u)) {
@@ -628,56 +625,185 @@ bool vl53l1x_init(void)
     return true;
 }
 
+#define REG_GPIO__TIO_HV_STATUS                             0x0031u
+#define REG_GPIO_HV_MUX__CTRL                               0x0030u
+#define REG_SYSTEM__INTERRUPT_CLEAR                         0x0086u
+#define REG_RESULT__RANGE_STATUS                            0x0089u
+#define REG_RESULT__FINAL_CROSSTALK_CORRECTED_RANGE_MM_SD0 0x0096u
+
+#define VL53L1X_RESULT_BLOCK_LEN 17u
+
+static uint8_t vl53l1x_irq_ready_level = 1u;
+static bool vl53l1x_discard_next_range = false;
+
+volatile uint8_t  vl53l1x_last_raw_status = 0xFFu;
+volatile uint16_t vl53l1x_last_raw_range  = 0u;
+volatile uint8_t  vl53l1x_last_result_block[17] = {0};
+
+static bool vl53l1x_read_multi(uint16_t reg, uint8_t *data, uint8_t len)
+{
+    if ((data == NULL) || (len == 0u)) {
+        return false;
+    }
+
+    if (!i2c_start()) {
+        return false;
+    }
+
+    if (!i2c_write_byte((uint8_t)((VL53L1X_ADDR << 1) | 0u))) {
+        (void)i2c_stop();
+        return false;
+    }
+
+    if (!i2c_write_byte((uint8_t)(reg >> 8))) {
+        (void)i2c_stop();
+        return false;
+    }
+
+    if (!i2c_write_byte((uint8_t)reg)) {
+        (void)i2c_stop();
+        return false;
+    }
+
+    if (!i2c_restart()) {
+        (void)i2c_stop();
+        return false;
+    }
+
+    if (!i2c_write_byte((uint8_t)((VL53L1X_ADDR << 1) | 1u))) {
+        (void)i2c_stop();
+        return false;
+    }
+
+    for (uint8_t i = 0; i < len; i++) {
+        bool send_nack = (i == (uint8_t)(len - 1u));
+
+        if (!i2c_read_byte(&data[i], send_nack)) {
+            (void)i2c_stop();
+            return false;
+        }
+    }
+
+    return i2c_stop();
+}
+
+static bool vl53l1x_read8(uint16_t reg, uint8_t *value)
+{
+    return vl53l1x_read_multi(reg, value, 1u);
+}
+
+static bool vl53l1x_write8(uint16_t reg, uint8_t value)
+{
+    if (!i2c_start()) {
+        return false;
+    }
+
+    if (!i2c_write_byte((uint8_t)((VL53L1X_ADDR << 1) | 0u))) {
+        (void)i2c_stop();
+        return false;
+    }
+
+    if (!i2c_write_byte((uint8_t)(reg >> 8))) {
+        (void)i2c_stop();
+        return false;
+    }
+
+    if (!i2c_write_byte((uint8_t)reg)) {
+        (void)i2c_stop();
+        return false;
+    }
+
+    if (!i2c_write_byte(value)) {
+        (void)i2c_stop();
+        return false;
+    }
+
+    return i2c_stop();
+}
+
+static bool vl53l1x_data_ready(bool *ready)
+{
+    uint8_t gpio_status;
+
+    if (ready == NULL) {
+        return false;
+    }
+
+    if (!vl53l1x_read8(REG_GPIO__TIO_HV_STATUS, &gpio_status)) {
+        return false;
+    }
+
+    *ready = ((gpio_status & 0x01u) == vl53l1x_irq_ready_level);
+    return true;
+}
+
+/* call this from your init after reading GPIO_HV_MUX__CTRL */
+bool vl53l1x_debug_set_irq_ready_level_from_sensor(void)
+{
+    uint8_t mux;
+
+    if (!vl53l1x_read8(REG_GPIO_HV_MUX__CTRL, &mux)) {
+        return false;
+    }
+
+    vl53l1x_irq_ready_level = (uint8_t)(!((mux >> 4) & 0x01u));
+    return true;
+}
+
+/* call this from your init after final start */
+void vl53l1x_debug_discard_first_sample(void)
+{
+    vl53l1x_discard_next_range = true;
+}
+
 vl53l1x_poll_result_t vl53l1x_poll(uint16_t *range_mm)
 {
-    bool timed_out = false;
-    tof4m_result_t result;
+    bool ready;
+    uint8_t buf[VL53L1X_RESULT_BLOCK_LEN];
+    uint16_t range;
 
     if (range_mm == NULL) {
         return VL53L1X_POLL_ERROR;
     }
 
-    /*
-     * Match your SV sample path:
-     * poll GPIO status internally before reading the range.
-     */
-    if (!tof4m_wait_data_ready(TOF4M_STATUS_POLL_LIMIT, &timed_out)) {
+    if (!vl53l1x_data_ready(&ready)) {
         return VL53L1X_POLL_ERROR;
     }
 
-    if (timed_out) {
+    if (!ready) {
         return VL53L1X_POLL_NONE;
     }
 
-    if (!tof4m_read_result(&result)) {
+    if (!vl53l1x_read_multi(REG_RESULT__RANGE_STATUS,
+                            buf,
+                            VL53L1X_RESULT_BLOCK_LEN)) {
         return VL53L1X_POLL_ERROR;
     }
 
-    vl53l1x_last_raw_status = result.range_status;
-    vl53l1x_last_raw_range = result.range_mm;
+    for (uint8_t i = 0; i < VL53L1X_RESULT_BLOCK_LEN; ++i) {
+        vl53l1x_last_result_block[i] = buf[i];
+    }
 
-    if (!tof4m_clear_interrupt()) {
+    vl53l1x_last_raw_status = buf[0];
+
+    /* 0x0096/0x0097 are bytes 13/14 of the 17-byte block starting at 0x0089 */
+    range = ((uint16_t)buf[13] << 8) | buf[14];
+    vl53l1x_last_raw_range = range;
+
+    if (!vl53l1x_write8(REG_SYSTEM__INTERRUPT_CLEAR, 0x01u)) {
         return VL53L1X_POLL_ERROR;
     }
 
-    /*
-     * Status 18 is the common sync/first-stream interrupt.
-     * Also discard the first post-start sample, like your SV.
-     */
-    if (tof4m_discard_next_range || (result.range_status == 18u)) {
-        tof4m_discard_next_range = false;
+    if (vl53l1x_discard_next_range || (buf[0] == 18u)) {
+        vl53l1x_discard_next_range = false;
         return VL53L1X_POLL_NONE;
     }
 
-    /*
-     * ToF4M minimum useful range is around 40 mm, so zero is not useful data.
-     * Returning INVALID here makes your existing main display F0ss instead of
-     * silently showing a bogus zero.
-     */
-    if (result.range_mm == 0u) {
+    *range_mm = range;
+
+    if (range == 0u) {
         return VL53L1X_POLL_INVALID;
     }
 
-    *range_mm = result.range_mm;
     return VL53L1X_POLL_OK;
 }
