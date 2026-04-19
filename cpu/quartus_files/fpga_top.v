@@ -5,8 +5,8 @@ module fpga_top(
     output wire [3:0] DIGS,
     output wire [7:0] SEGS,
 
-    input  wire BTN1,
-    input  wire BTN2,
+    input  wire BTN1_n,
+    input  wire BTN2_n,
 
     inout wire SDA,
     inout wire SCL
@@ -23,14 +23,14 @@ reg btn1, BTN1_d;
 
 always @(posedge CLK) begin
     btn1 <= BTN1_d;
-    BTN1_d <= BTN1;
+    BTN1_d <= ~BTN1_n;
 end
 
 reg btn2, BTN2_d;
 
 always @(posedge CLK) begin
     btn2 <= BTN2_d;
-    BTN2_d <= BTN2;
+    BTN2_d <= ~BTN2_n;
 end
 
 
