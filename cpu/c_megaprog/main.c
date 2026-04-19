@@ -35,6 +35,8 @@ static void sleep_ms(uint32_t ms)
 #define CLOSE_DEBOUNCE_SAMPLES 2u
 #define OPEN_DEBOUNCE_SAMPLES  2u
 
+#define FIB_EVERY_N_LOOPS 15u
+
 /* Set to 0u to remove debug pauses */
 #define DEBUG_TRANSITION_MS 400u
 
@@ -54,6 +56,39 @@ static void fatal(uint16_t code)
 {
     while (1) {
         *disp = code;
+    }
+}
+
+/* 1, 2, 3, 5, 8, 13
+ * дисплей hex, значит 13 -> 0x000D
+ */
+static uint16_t fib_hex_value(uint8_t index)
+{
+    if (index == 0u) {
+        return 0x0001u;
+    }
+    if (index == 1u) {
+        return 0x0002u;
+    }
+    if (index == 2u) {
+        return 0x0003u;
+    }
+    if (index == 3u) {
+        return 0x0005u;
+    }
+    if (index == 4u) {
+        return 0x0008u;
+    }
+
+    return 0x000Du;
+}
+
+static void display_value(uint16_t normal_value, bool show_fib, uint16_t fib_value)
+{
+    if (show_fib) {
+        *disp = fib_value;
+    } else {
+        *disp = normal_value;
     }
 }
 
@@ -101,6 +136,11 @@ int main(void)
     uint8_t close_count = 0u;
     uint8_t open_count = 0u;
 
+    uint8_t fib_loop_counter = 0u;
+    uint8_t fib_index = 0u;
+    uint16_t fib_value = 0u;
+    bool show_fib = false;
+
     vl53l1x_poll_result_t r;
 
     rover_t rover;
@@ -138,6 +178,21 @@ int main(void)
 
     bool sensor_needed = true;
     while (1) {
+        show_fib = false;
+        if (fib_loop_counter + 1u >= FIB_EVERY_N_LOOPS) {
+            fib_loop_counter = 0u;
+            show_fib = true;
+            fib_value = fib_hex_value(fib_index);
+
+            if (fib_index < 5u) {
+                ++fib_index;
+            } else {
+                fib_index = 0u;
+            }
+        } else {
+            ++fib_loop_counter;
+        }
+
         sleep_ms(15u);
         r = vl53l1x_poll(&distance_mm);
         sleep_ms(15u);
@@ -155,7 +210,7 @@ int main(void)
             rover_high_go_straight(&high);
 
             if (r == VL53L1X_POLL_OK) {
-                *disp = distance_mm;
+                display_value(distance_mm, show_fib, fib_value);
 
                 if (distance_mm <= STRAIGHT_TRIGGER_MM) {
                     if (close_count < 255u) {
@@ -177,7 +232,7 @@ int main(void)
                     close_count = 0u;
                 }
             } else {
-                *disp = 0xFFF2u;
+                display_value(0xFFF2u, show_fib, fib_value);
             }
 
             continue;
@@ -187,7 +242,7 @@ int main(void)
             rover_high_go_left(&high);
 
             if (r == VL53L1X_POLL_OK) {
-                *disp = distance_mm;
+                display_value(distance_mm, show_fib, fib_value);
 
                 if (distance_mm >= LEFT_OPEN_THRESHOLD_MM) {
                     if (open_count < 255u) {
@@ -207,7 +262,7 @@ int main(void)
                     open_count = 0u;
                 }
             } else {
-                *disp = 0x9002u;
+                display_value(0x9002u, show_fib, fib_value);
             }
 
             continue;
@@ -216,9 +271,9 @@ int main(void)
         rover_high_go_straight(&high);
 
         if (r == VL53L1X_POLL_OK) {
-            *disp = distance_mm;
+            display_value(distance_mm, show_fib, fib_value);
         } else {
-            *disp = 0xFFF2u;
+            display_value(0xFFF2u, show_fib, fib_value);
         }
     }
 }
