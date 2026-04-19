@@ -2,6 +2,7 @@
 
 #include "rover.h"
 #include "rover_high.h"
+#include "i2c.h"
 #include "vl53l1x_simple.h"
 
 #define disp   ((volatile uint16_t*)0x20)
@@ -37,6 +38,11 @@ static void sleep_ms(uint32_t ms)
 /* Set to 0u to remove debug pauses */
 #define DEBUG_TRANSITION_MS 400u
 
+/* Recovery timing for ToF4M sensor re-init */
+#define TOF4M_RECOVERY_DELAY_MS 10u
+#define TOF4M_RECOVERY_FAIL_CODE 0xFFF1u
+#define TOF4M_RECOVERY_ACTIVE_CODE 0xFFF3u
+
 static void sleep_transition(void)
 {
 #if DEBUG_TRANSITION_MS > 0u
@@ -51,8 +57,35 @@ static void fatal(uint16_t code)
     }
 }
 
+static bool recover_tof4m(void)
+{
+    /*
+     * Sensor-only recovery path.
+     * Motors are intentionally not touched here.
+     */
+    *disp = TOF4M_RECOVERY_ACTIVE_CODE;
+
+    (void)vl53l1x_stop();
+    sleep_ms(TOF4M_RECOVERY_DELAY_MS);
+
+    if (!vl53l1x_init()) {
+        *disp = TOF4M_RECOVERY_FAIL_CODE;
+        return false;
+    }
+
+    return true;
+}
+
 int main(void)
 {
+    {
+        static const uint8_t stop_motors[4] = { 0u, 0u, 0u, 0u };
+        (void)i2c_write_reg8_burst(ROVER_I2C_ADDR_DEFAULT,
+                                   0x00u,
+                                   stop_motors,
+                                   sizeof(stop_motors));
+    }
+
     while (!*button) {
         sleep_ms(50u);
     }
@@ -104,8 +137,12 @@ int main(void)
         sleep_ms(15u);
 
         if (r == VL53L1X_POLL_ERROR) {
-            rover_high_stop(&high);
-            fatal(0xFFF3u);
+            /*
+             * Re-initialize only the ToF4M sensor and preserve the current
+             * state machine state and debounce counters.
+             */
+            (void)recover_tof4m();
+            continue;
         }
 
         if (state == STATE_STRAIGHT_1) {
