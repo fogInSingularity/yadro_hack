@@ -8,6 +8,10 @@ reg rst_n;
 wire SDA, SCL;
 wire [3:0] DIGS;
 wire [7:0] SEGS;
+wire BTN1, BTN2;
+
+assign BTN1 = 0;
+assign BTN2 = 0;
  
 initial begin
     clk = 1'b0;
@@ -21,6 +25,8 @@ system_top #(
     .rst_n            (rst_n),
     .sda_io           (SDA),
     .scl_io           (SCL),
+    .i_btn1           (BTN1),
+    .i_btn2           (BTN2),
     .o_disp_7seg_digs (DIGS),
     .o_disp_7seg_segs (SEGS)
 );

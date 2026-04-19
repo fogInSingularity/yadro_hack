@@ -7,6 +7,9 @@ set_false_path -from * -to [get_ports {SEGS[*]}]
 set_false_path -from * -to [get_ports {DIGS[*]}]
 set_false_path -from RSTN -to [all_clocks]
 
+set_false_path -from BTN1 -to [all_clocks]
+set_false_path -from BTN2 -to [all_clocks]
+
 set_false_path -from SDA -to [all_clocks]
 set_false_path -from SCL -to [all_clocks]
 

@@ -80,6 +80,9 @@ set_location_assignment PIN_137 -to DIGS[3]
 set_location_assignment PIN_77 -to SCL
 set_location_assignment PIN_76 -to SDA
 
+set_location_assignment PIN_88 -to BTN1
+set_location_assignment PIN_89 -to BTN2
+
 set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to *
 set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to SCL
 set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to SDA

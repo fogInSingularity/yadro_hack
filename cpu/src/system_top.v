@@ -9,6 +9,9 @@ module system_top #(
     output wire [3:0] o_disp_7seg_digs,
     output wire [7:0] o_disp_7seg_segs,
 
+    input  wire i_btn1,
+    input  wire i_btn2,
+
     inout wire sda_io,
     inout wire scl_io
 );
@@ -87,6 +90,9 @@ io_subsystem #(
 
     .o_disp_7seg_digs    (o_disp_7seg_digs),
     .o_disp_7seg_segs    (o_disp_7seg_segs),
+
+    .i_btn1              (i_btn1),
+    .i_btn2              (i_btn2),
 
     .i_scl               (scl_pad_i_s),
     .o_scl_oen           (scl_padoen),

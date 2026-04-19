@@ -15,6 +15,9 @@ module io_subsystem #(
     output wire [3:0]  o_disp_7seg_digs,
     output wire [7:0]  o_disp_7seg_segs,
 
+    input  wire        i_btn1,
+    input  wire        i_btn2,
+
     input  wire        i_scl,
     output wire        o_scl_oen,
     input  wire        i_sda,
@@ -25,6 +28,19 @@ reg [31:0] mmio_data_q;
 reg [31:0] mmio_data; // not a reg actually
 
 assign o_mmio_data = mmio_data_q;
+
+always @(*) begin
+    case ({i_mmio_addr, 2'b0, i_mmio_mask})
+        {32'h30, 4'b0001}: mmio_data = {24'b0, i2c_o_dout};
+        {32'h34, 4'b0001}: mmio_data = {31'b0, i2c_o_rx_ack};
+        {32'h38, 4'b0001}: mmio_data = {31'b0, i2c_o_ready};
+        {32'h3C, 4'b0001}: mmio_data = {31'b0, i2c_o_arb_lost};
+        {32'h44, 4'b0001}: mmio_data = {31'b0, i2c_o_busy};
+        {32'h00, 4'b0001}: mmio_data = {31'b0, btn1_r};
+        {32'h04, 4'b0001}: mmio_data = {31'b0, btn2_r};
+        default:           mmio_data = 32'bx;
+    endcase
+end
 
 // ---------------------------------------
 // ------------- DISP 7 SEG --------------
@@ -54,6 +70,17 @@ ctrl_7_seg_disp #(
 );
 
 // ---------------------------------------
+// ---------------- BTNS -----------------
+// ---------------------------------------
+
+reg btn1_r, btn2_r;
+
+always @(posedge clk) begin
+    btn1_r <= i_btn1;
+    btn2_r <= i_btn2;
+end
+
+// ---------------------------------------
 // ------------- I2C MASTER --------------
 // ---------------------------------------
 
@@ -72,16 +99,6 @@ reg i2c_cmd_wren;
 reg i2c_din_wren;
 reg i2c_arb_lost_clear_wren;
 
-always @(*) begin
-    case ({i_mmio_addr, 2'b0, i_mmio_mask})
-        {32'h30, 4'b0001}: mmio_data = {24'b0, i2c_o_dout};
-        {32'h34, 4'b0001}: mmio_data = {31'b0, i2c_o_rx_ack};
-        {32'h38, 4'b0001}: mmio_data = {31'b0, i2c_o_ready};
-        {32'h3C, 4'b0001}: mmio_data = {31'b0, i2c_o_arb_lost};
-        {32'h44, 4'b0001}: mmio_data = {31'b0, i2c_o_busy};
-        default:           mmio_data = 32'bx;
-    endcase
-end
 
 always @(posedge clk) begin
     mmio_data_q <= mmio_data;
