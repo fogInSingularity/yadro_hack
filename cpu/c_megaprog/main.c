@@ -4,7 +4,8 @@
 #include "rover_high.h"
 #include "vl53l1x_simple.h"
 
-#define disp ((volatile uint16_t*)0x20)
+#define disp   ((volatile uint16_t*)0x20)
+#define button ((volatile uint16_t*)0x4)
 
 #define LOOPS_PER_MS 7000u
 static void sleep_ms(uint32_t ms)
@@ -60,6 +61,10 @@ static void fatal(uint16_t code)
 
 int main(void)
 {
+    while (!button) {
+        sleep_ms(50);
+    }
+
     uint16_t distance_mm = 0u;
     uint8_t state = STATE_STRAIGHT;
 
