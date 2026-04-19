@@ -28,14 +28,14 @@ static void sleep_ms(uint32_t ms)
 #define STRAIGHT_SPEED 127
 #define STRAFE_LEFT_SPEED 90
 
-#define STRAIGHT_TRIGGER_MM    50u
-#define LEFT_OPEN_THRESHOLD_MM 100u
+#define STRAIGHT_TRIGGER_MM    250u
+#define LEFT_OPEN_THRESHOLD_MM 400u
 
 #define CLOSE_DEBOUNCE_SAMPLES 2u
 #define OPEN_DEBOUNCE_SAMPLES  2u
 
 /* Set to 0u to remove debug pauses */
-#define DEBUG_TRANSITION_MS 3000u
+#define DEBUG_TRANSITION_MS 50u
 
 static void sleep_transition(void)
 {
