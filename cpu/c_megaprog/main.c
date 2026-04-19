@@ -91,25 +91,25 @@ int main(void)
     cfg.invert_rear_right  = true;
 
     /* Straight */
-    cfg.straight_left_speed  = 70;
-    cfg.straight_right_speed = 68;
+    cfg.straight_left_speed  = 127;
+    cfg.straight_right_speed = 127;
 
     /* Right turn */
-    cfg.turn_right_left_speed  = 75;
-    cfg.turn_right_right_speed = -75;
+    cfg.turn_right_left_speed  =  127;
+    cfg.turn_right_right_speed = -127;
 
     /* Left turn */
-    cfg.turn_left_left_speed  = -75;
-    cfg.turn_left_right_speed = 75;
+    cfg.turn_left_left_speed  = -127;
+    cfg.turn_left_right_speed = 127;
 
     if (!rover_high_init(&high, &rover, &cfg)) {
         fatal(0xFFF6);
     }
 
     while (1) {
-        sleep_ms(25);
+        sleep_ms(15);
         vl53l1x_poll_result_t r = vl53l1x_poll(&distance_mm);
-        sleep_ms(25);
+        sleep_ms(15);
         volatile robot_state_t current_state;
 
         if (r == VL53L1X_POLL_ERROR) {

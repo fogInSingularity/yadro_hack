@@ -130,8 +130,8 @@ void rover_high_default_config(rover_high_config_t* cfg)
     }
 
     cfg->front_left_motor  = ROVER_MOTOR_1;
-    cfg->rear_left_motor   = ROVER_MOTOR_2;
-    cfg->front_right_motor = ROVER_MOTOR_3;
+    cfg->rear_left_motor   = ROVER_MOTOR_3;
+    cfg->front_right_motor = ROVER_MOTOR_2;
     cfg->rear_right_motor  = ROVER_MOTOR_4;
 
     cfg->invert_front_left  = false;
